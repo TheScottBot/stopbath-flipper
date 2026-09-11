@@ -240,7 +240,12 @@ static int find_application_channel(DevelopmentPeerCore* peer, const char* prefe
         if(preferred != NULL && preferred[0] != '\0') {
             int device = probe_node(peer, preferred);
             if(device >= 0) {
-                snprintf(found_path, found_capacity, "%s", preferred);
+                /* reopen_device passes the same buffer as preferred and
+                 * found_path; copying a string onto itself through snprintf is
+                 * undefined, so only copy when they differ. */
+                if(found_path != preferred) {
+                    snprintf(found_path, found_capacity, "%s", preferred);
+                }
                 return device;
             }
         }

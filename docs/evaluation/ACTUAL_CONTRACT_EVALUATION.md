@@ -19,7 +19,7 @@ uncertainties, and which author decisions are still open.
   only places a double hyphen appears, and the scan built in FE1 must exempt
   exactly those and nothing else.
 
-## Status summary (last updated 2026-09-11, after FE2 and the surface experiments)
+## Status summary (last updated 2026-09-11, after the FE4 hardware gate cleared)
 
 | Section | Topic | Status |
 |---|---|---|
@@ -34,7 +34,7 @@ uncertainties, and which author decisions are still open.
 | FE2 | Display | DONE 2026-09-11. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Gate cleared by the author the same day, indoors. |
 | Experiments | `FD4`, `FD15` to `FD17` | DONE 2026-09-11, brought forward from FE5 and FE6 at the author's direction so the two guest facing surfaces were proven on hardware before any protocol or appliance work. Both surfaces work. Recorded as a build order deviation in `IMPLEMENTATION_DEVIATIONS.md`. |
 | FE3 | Protocol, peer, fuzz | DONE 2026-09-11 on the automated side. Provisional protocol drafted in `PROTOCOL.md` and `protocol.json`; parser and encoder generated from one table; parser fuzzed clean; development peer with misbehaviour modes and a serial shell. Decisions `FD7`, `FD8`, `FD9` and the framing settled by the author for the provisional period; frozen at `FD20`. No hardware gate: FE3 touches no device. |
-| FE4 | Transport, session | DONE 2026-09-11 on the automated side. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. Hardware gate (twenty cable pulls) outstanding, the author's. |
+| FE4 | Transport, session | DONE 2026-09-11, hardware gate cleared the same day. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. On the device against the Pi: handshake, all four reported buttons, both lock transitions, and reconnection after a cable pull all confirmed. Five bugs surfaced only at the gate and are recorded under "Hardware findings, FE4" below; none was visible to the host tests, because each lived in the SDK glue or the peer's OS I/O, neither of which is host tested. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -436,6 +436,74 @@ behaves differently depending on the supply it detects, and that has not been
 recorded in the main repository's evaluation either. This is owed to `FD10` and
 to the PE2 hardware gate, and if the combination does not fit it is raised in the
 main specification rather than solved here.
+
+Partial hardware observation, 2026-09-11 (FE4 gate): with charging allowed, a
+cable pull or replug repeatedly browned out the Pi enough to drop the author's
+SSH session, and once appeared to crash it transiently. Entering charge
+suppression on link open (`furi_hal_power_suppress_charge_enter`, matched by the
+exit on close) removed the crash and reduced the SSH hang to an occasional brief
+stall on a plug cycle, not gone. This is the FD10 mitigation applied ahead of its
+measurement: a charging Flipper both loads the shared budget and makes an unplug
+a larger current transient, and stopping the charge current addresses both. The
+quantities behind it (total draw, the transient) remain unmeasured and owed to
+FD10 and PE2; the observation is qualitative and from one session.
+
+## Hardware findings, FE4 (2026-09-11)
+
+Five defects surfaced only when the application ran on the device against the Pi.
+Each sat in code the host tests do not cover, by the architecture's own division:
+the SDK USB glue (`remote_transport.c`, `stopbath_remote.c`) and the peer's OS I/O
+(`peer/development_peer_shell.c`) are the thin untested edges; the pure logic they
+wrap was correct throughout. They are recorded here because the lesson is the
+division itself, not the individual bugs.
+
+1. Send from a stack buffer. `furi_hal_cdc_send` is asynchronous: it hands the
+   buffer to the USB endpoint and returns before the bytes leave, so a buffer on
+   the service call's stack was overwritten mid transmit and the peer saw
+   malformed lines. Fixed by holding the transmit buffer on the transport and a
+   `tx_complete` semaphore released by the tx complete callback, exactly as
+   `usb_uart_bridge.c` does. This was the difference between no handshake and the
+   first working one; the host tests could not see it because they move bytes
+   through a synchronous in memory pipe.
+
+2. USB mode locked during `ufbt launch`. Launch holds an RPC session, which locks
+   the USB mode, so the application's `set_config(usb_cdc_dual)` failed and was
+   never retried, leaving a permanent "Pi disconnected". Fixed with a one second
+   retry of `remote_transport_open` in the main loop.
+
+3. Stale DTR across a physical pull. A cable yank gives the host no chance to drop
+   DTR, so the transport's `dtr_present` stayed true and a replug looked like a
+   port already open, starting a handshake with nobody there. Fixed by clearing
+   `dtr_present` in the state callback when USB is no longer connected.
+
+4. Send wedge after a mid transmit pull. If the cable was pulled while a transmit
+   was in flight, the tx complete interrupt never fired, so the semaphore stayed
+   taken and every later send timed out for the life of the process. Verified
+   three times. Fixed by normalising the semaphore to available on the port close
+   edge in `remote_transport_service`.
+
+5. Peer never detected the unplug. The most stubborn, and the last cleared. The
+   peer opens the node `O_NONBLOCK` with `VMIN=0, VTIME=0`, in which `read`
+   returns 0 for no data; a USB CDC unplug also makes `read` return 0, so the two
+   are indistinguishable and the peer read zeros off the dead node forever,
+   never re probing, never reopening the new node, never asserting DTR. The
+   Flipper, correctly waiting for the host to open the port, stayed "Pi
+   disconnected" with nothing wrong on its side. The tell was that the peer never
+   printed "device gone" across repeated cycles while `ls /dev/ttyACM*` showed the
+   Flipper re enumerating on a new node each time. Fixed by polling the node for
+   `POLLHUP`/`POLLERR`, which the kernel raises distinctly on a tty hangup, before
+   each pump. This is a development tool detail, not a device contract point: the
+   real appliance identifies the channel by a udev rule on serial and interface
+   (4.2) rather than by probing, and detects the detach through its own I/O layer.
+
+Two lessons for the record. First, the node number is not stable across a
+reattachment on this platform (ttyACM1 to ttyACM3 and back), and
+`/dev/serial/by-id/` is absent on this Pi, so the peer must find the channel by
+probing each `ttyACM` node for the HELLO only the application sends; a fixed node
+assumption fails on the second connection. Second, every one of these five is in
+the untested glue, which confirms the value of keeping that glue as thin as
+possible: the state machine, protocol, and layout, all host tested, needed no
+change at the gate.
 
 ## 4.4 Display and QR
 
