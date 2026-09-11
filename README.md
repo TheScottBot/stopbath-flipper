@@ -12,12 +12,12 @@ and the meaning of every button. The specification is
 
 ## Status
 
-Phases `FE1` and `FE2` are cleared, and both guest facing surfaces have been
-proven on hardware ahead of their phases: the application renders every
-display state from a fixture, draws a real QR code for the page's payload,
-and presents the same payload over NFC as a Type 4 Tag, all confirmed with a
-phone. It talks to no appliance yet. The protocol is drafted next, in `FE3`;
-see `PROTOCOL.md`.
+Phases `FE1` to `FE3` are done. The application renders every display state,
+draws a real QR code and presents the same payload over NFC, all confirmed
+with a phone. The protocol is drafted (`PROTOCOL.md`, `protocol.json`) with a
+freestanding parser and encoder, a fuzz harness, and a development peer that
+stands in for the appliance. It is provisional until the freeze (`FD20`).
+Transport wiring to a real Flipper is `FE4`, next.
 
 Hardware gates cleared by the author are recorded in
 `HARDWARE_COMPATIBILITY.md`. Nothing in this repository claims a hardware gate
@@ -101,6 +101,9 @@ make check-typography PYTHON="py -3"
 | `stopbath_remote.c` | the SDK facing application, kept thin |
 | `remote_input/` | pure logic: what a press does to the device, no SDK |
 | `remote_display/` | pure logic: what goes where on the screen, the shared display fixtures, the generated font metrics, the QR wrapper, and the NDEF builder, no SDK |
+| `protocol/` | the parser and encoder, and the tables generated from `protocol.json` |
+| `peer/` | the development peer: a host stand-in for the appliance, core and shell |
+| `fuzz/` | the protocol parser fuzz harness |
 | `lib/qrcodegen/` | the vendored QR encoder, unmodified, with its licence and provenance |
 | `tests/` | host tests and the shared test harness |
 | `scripts/` | repository checks |

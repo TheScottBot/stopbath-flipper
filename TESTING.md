@@ -14,6 +14,10 @@ testing deviation with its reason, never left unstated.
 | `tests/test_remote_font_metrics.c` (FE2) | host, any `gcc` | `make test` |
 | `tests/test_remote_qr.c` (FE5, brought forward for the FD4 experiment) | host, any `gcc` | `make test` |
 | `tests/test_remote_ndef.c` (FE6, brought forward for the FD15 to FD17 experiment) | host, any `gcc` | `make test` |
+| `tests/test_remote_protocol.c` (FE3) | host, any `gcc` | `make test` |
+| `tests/test_development_peer.c` (FE3) | host, any `gcc` | `make test` |
+| protocol parser fuzz harness (FE3) | host, deterministic; sanitised on Linux | `make fuzz`, `make fuzz-sanitise` |
+| generated tables match `protocol.json` (FE3) | any Python 3 | `make check-protocol-tables` |
 | all of the above under address and undefined behaviour sanitisers | Linux or WSL | `make test-sanitise` |
 | typography scan (specification 0.8) | any Python 3 | `make check-typography` |
 | application build, warnings as errors, against the pinned SDK | host with `ufbt` | `py -3 -m ufbt` |
@@ -59,6 +63,18 @@ negative) before the builder was implemented. The vectors were written from
 the firmware's NDEF parser and Android's parser, not from the NFC Forum or
 Wi-Fi Alliance specifications; `FE6` proper owes vectors from a published
 source.
+
+`FE3`: every verb round trips through the encoder and the parser; truncation,
+overlong lines, unknown verbs and fields, missing and repeated fields, wrong
+version, embedded nulls, non printable bytes, bad escapes, and payloads at and
+one over the bound are each refused with their typed code; the assembler
+recovers after every error; nothing in the parse or encode path allocates
+(proven by wrapped heap functions); and the development peer drives every
+display state, records every event, answers the handshake, and produces each
+misbehaviour mode. All written and seen to fail before the library existed.
+The parser is fuzzed with a deterministic driver whose oracle re-encodes and
+re-parses every accepted message; it runs under the sanitisers in continuous
+integration.
 
 Later phases add their own suites and are listed here when they do.
 

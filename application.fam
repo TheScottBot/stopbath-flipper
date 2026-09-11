@@ -16,7 +16,7 @@ App(
     # The source glob is recursive (recorded in the evaluation log 4.1), so
     # the host tests and the per-project SDK checkout must be excluded by
     # name or they would be compiled into the application.
-    sources=["*.c", "!tests", "!.ufbt", "!build", "!dist"],
+    sources=["*.c", "!tests", "!peer", "!fuzz", "!.ufbt", "!build", "!dist"],
     # The QR encoder, vendored verbatim under lib/ (the folder the build
     # system reserves for private libraries). Provenance and the dependency
     # record are in docs/evaluation/ACTUAL_CONTRACT_EVALUATION.md.

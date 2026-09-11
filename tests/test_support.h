@@ -55,6 +55,41 @@ typedef struct {
 
 #define REMOTE_TEST_ROW_COUNT(rows) ((int)(sizeof(rows) / sizeof((rows)[0])))
 
+/*
+ * Allocation accounting. Every test binary is linked with the heap functions
+ * wrapped (see the Makefile), so any allocation made by code under test
+ * passes through here and is counted. A test that must not allocate reads
+ * the counter before and after. The wrappers forward to the real functions
+ * so the C library itself keeps working.
+ */
+extern int remote_test_allocation_count;
+int remote_test_allocation_count = 0;
+
+void* __real_malloc(size_t size);
+void* __real_calloc(size_t count, size_t size);
+void* __real_realloc(void* block, size_t size);
+void __real_free(void* block);
+void* __wrap_malloc(size_t size);
+void* __wrap_calloc(size_t count, size_t size);
+void* __wrap_realloc(void* block, size_t size);
+void __wrap_free(void* block);
+
+void* __wrap_malloc(size_t size) {
+    remote_test_allocation_count++;
+    return __real_malloc(size);
+}
+void* __wrap_calloc(size_t count, size_t size) {
+    remote_test_allocation_count++;
+    return __real_calloc(count, size);
+}
+void* __wrap_realloc(void* block, size_t size) {
+    remote_test_allocation_count++;
+    return __real_realloc(block, size);
+}
+void __wrap_free(void* block) {
+    __real_free(block);
+}
+
 /* Runs every case, prints one line per case, and returns the process exit
  * code: zero only when every assertion in every case passed. A case with no
  * assertions at all is a failure, because an empty test proves nothing. */

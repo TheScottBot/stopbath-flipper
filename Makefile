@@ -19,6 +19,10 @@ HOST_WARNINGS := $(SDK_WARNINGS) -Wshadow -Wconversion
 HOST_CFLAGS := $(HOST_WARNINGS) -O1 -g -Ilib/qrcodegen
 VENDORED_CFLAGS := $(SDK_WARNINGS) -O1 -g
 SANITISER_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
+# Heap functions are wrapped in every test binary so a test can prove that
+# the code under it did not allocate (specification 0.10, FE3). The wrappers
+# live in tests/test_support.h.
+ALLOCATION_WRAP_LDFLAGS := -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
 
 BUILD_DIR := build/host
 
@@ -30,8 +34,11 @@ PURE_LOGIC_SOURCES := remote_input/remote_input_model.c \
                       remote_display/remote_font_metrics.c \
                       remote_display/remote_font_measure.c \
                       remote_display/remote_qr.c \
-                      remote_display/remote_ndef.c
-PURE_LOGIC_HEADERS := $(wildcard remote_input/*.h remote_display/*.h lib/qrcodegen/*.h)
+                      remote_display/remote_ndef.c \
+                      protocol/remote_protocol_tables.c \
+                      protocol/remote_protocol.c \
+                      peer/development_peer_core.c
+PURE_LOGIC_HEADERS := $(wildcard remote_input/*.h remote_display/*.h protocol/*.h peer/*.h lib/qrcodegen/*.h)
 
 # The vendored encoder is a private library on the device (application.fam)
 # and is compiled once per warning set here.
@@ -45,7 +52,17 @@ TEST_HEADERS := tests/test_support.h
 TEST_BINARIES := $(patsubst tests/%.c,$(BUILD_DIR)/%,$(TEST_SOURCES))
 SANITISED_TEST_BINARIES := $(patsubst tests/%.c,$(BUILD_DIR)/%_sanitised,$(TEST_SOURCES))
 
-.PHONY: test test-sanitise check-typography check clean
+# The fuzz driver: the protocol library plus the harness, run for a fixed
+# number of deterministic inputs. FUZZ_ITERATIONS sets how many.
+FUZZ_SOURCE := fuzz/fuzz_remote_protocol.c
+FUZZ_ITERATIONS ?= 200000
+PROTOCOL_SOURCES := protocol/remote_protocol_tables.c protocol/remote_protocol.c
+
+# The development peer shell is POSIX (termios), so it builds on Linux and
+# WSL, not under MinGW. It is a host tool, never part of the FAP.
+PEER_SOURCES := peer/development_peer_shell.c peer/development_peer_core.c $(PROTOCOL_SOURCES)
+
+.PHONY: test test-sanitise fuzz fuzz-sanitise peer check-typography check-protocol-tables check clean
 
 test: $(TEST_BINARIES)
 	@for suite in $(TEST_BINARIES); do echo "== $$suite"; $$suite || exit 1; done
@@ -63,16 +80,40 @@ $(VENDORED_SANITISED_OBJECT): $(VENDORED_SOURCES) $(PURE_LOGIC_HEADERS)
 
 $(BUILD_DIR)/%: tests/%.c $(PURE_LOGIC_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS) $(VENDORED_OBJECT)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(HOST_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES) $(VENDORED_OBJECT)
+	$(CC) $(HOST_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES) $(VENDORED_OBJECT) $(ALLOCATION_WRAP_LDFLAGS)
 
 $(BUILD_DIR)/%_sanitised: tests/%.c $(PURE_LOGIC_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS) $(VENDORED_SANITISED_OBJECT)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(HOST_CFLAGS) $(SANITISER_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES) $(VENDORED_SANITISED_OBJECT)
+	$(CC) $(HOST_CFLAGS) $(SANITISER_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES) $(VENDORED_SANITISED_OBJECT) $(ALLOCATION_WRAP_LDFLAGS)
+
+fuzz: $(BUILD_DIR)/fuzz_remote_protocol
+	$(BUILD_DIR)/fuzz_remote_protocol $(FUZZ_ITERATIONS)
+
+fuzz-sanitise: $(BUILD_DIR)/fuzz_remote_protocol_sanitised
+	$(BUILD_DIR)/fuzz_remote_protocol_sanitised $(FUZZ_ITERATIONS)
+
+$(BUILD_DIR)/fuzz_remote_protocol: $(FUZZ_SOURCE) $(PROTOCOL_SOURCES) $(PURE_LOGIC_HEADERS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(HOST_CFLAGS) -o $@ $(FUZZ_SOURCE) $(PROTOCOL_SOURCES)
+
+$(BUILD_DIR)/fuzz_remote_protocol_sanitised: $(FUZZ_SOURCE) $(PROTOCOL_SOURCES) $(PURE_LOGIC_HEADERS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(HOST_CFLAGS) $(SANITISER_CFLAGS) -o $@ $(FUZZ_SOURCE) $(PROTOCOL_SOURCES)
+
+peer: $(BUILD_DIR)/development_peer
+
+$(BUILD_DIR)/development_peer: $(PEER_SOURCES) $(PURE_LOGIC_HEADERS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(HOST_CFLAGS) -o $@ $(PEER_SOURCES)
 
 check-typography:
 	$(PYTHON) scripts/check_typography.py
 
-check: check-typography test
+# The generated parser and encoder tables must match protocol.json exactly.
+check-protocol-tables:
+	$(PYTHON) scripts/generate_protocol_tables.py --check
+
+check: check-typography check-protocol-tables test fuzz
 
 clean:
 	rm -rf build

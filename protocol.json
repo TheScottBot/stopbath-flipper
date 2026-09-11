@@ -1,0 +1,90 @@
+{
+  "name": "stopbath-peripheral-protocol",
+  "status": "provisional until FD20",
+  "protocol_version": 1,
+  "framing": {
+    "description": "One message per line. A line is a verb, then zero or more fields, separated by single spaces, ended by a line feed. A field is a name, an equals sign, and a value. Values are percent encoded: bytes outside the unreserved set (letters, digits, hyphen, full stop, underscore, tilde) are written as a percent sign and two upper case hexadecimal digits. A message never contains a byte outside 0x20 to 0x7E except its terminating line feed. Every field of a verb is required, appears once, and may appear in any order. Unknown verbs and unknown fields are rejected.",
+    "terminator": "\n",
+    "field_separator": " ",
+    "name_value_separator": "=",
+    "escape": "%",
+    "unreserved": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+  },
+  "bounds": {
+    "maximum_message_length": 512,
+    "maximum_payload_length": 256,
+    "maximum_peripheral_token_length": 32,
+    "maximum_delivered_count": 9999,
+    "maximum_protocol_version": 65535,
+    "maximum_inbound_messages_per_second": 10,
+    "maximum_inbound_burst": 20,
+    "consecutive_malformed_before_link_drop": 5,
+    "peripheral_outbound_queue_depth": 4
+  },
+  "enumerations": {
+    "event": ["CENTER_SHORT", "CENTER_LONG", "LEFT_SHORT", "RIGHT_SHORT", "BACK_SHORT"],
+    "status": ["READY", "PRESENTING", "GUEST_CONNECTED", "TERMINATING", "RECOVERY_REQUIRED"],
+    "page": ["NONE", "WIFI", "GUEST"],
+    "error": [
+      "NONE",
+      "BAD_VERSION",
+      "NO_HELLO",
+      "MALFORMED",
+      "BAD_VERB",
+      "BAD_FIELD",
+      "NO_FIELD",
+      "BAD_VALUE",
+      "TOO_LONG",
+      "RATE_LIMIT",
+      "GUARD",
+      "ACTIVE",
+      "NO_SESSION",
+      "BAD_STATE",
+      "NOT_ALLOWED",
+      "START_FAIL",
+      "END_FAIL"
+    ]
+  },
+  "verbs": [
+    {
+      "name": "HELLO",
+      "direction": "peripheral_to_appliance",
+      "sent_when": "on attach and on peripheral restart",
+      "fields": [
+        {"name": "version", "type": "integer", "minimum": 1, "maximum": 65535},
+        {"name": "peripheral", "type": "token", "maximum_length": 32},
+        {"name": "locked", "type": "boolean"}
+      ]
+    },
+    {
+      "name": "BUTTON",
+      "direction": "peripheral_to_appliance",
+      "sent_when": "on a transmitted button press",
+      "fields": [
+        {"name": "event", "type": "enumeration", "enumeration": "event"},
+        {"name": "foregrounded", "type": "boolean"},
+        {"name": "unlocked", "type": "boolean"}
+      ]
+    },
+    {
+      "name": "STATE",
+      "direction": "peripheral_to_appliance",
+      "sent_when": "when the screen is locked or unlocked locally",
+      "fields": [
+        {"name": "locked", "type": "boolean"}
+      ]
+    },
+    {
+      "name": "DISPLAY",
+      "direction": "appliance_to_peripheral",
+      "sent_when": "after a successful HELLO, and on every change to any field",
+      "fields": [
+        {"name": "status", "type": "enumeration", "enumeration": "status"},
+        {"name": "page", "type": "enumeration", "enumeration": "page"},
+        {"name": "payload", "type": "text", "maximum_length": 256},
+        {"name": "delivered", "type": "integer", "minimum": 0, "maximum": 9999},
+        {"name": "error", "type": "enumeration", "enumeration": "error"}
+      ]
+    }
+  ]
+}

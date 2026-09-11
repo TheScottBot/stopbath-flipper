@@ -32,8 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: gcc --version
+      - run: make check-protocol-tables
       - run: make test
       - run: make test-sanitise
+      - run: make fuzz-sanitise FUZZ_ITERATIONS=200000
+      - run: make peer
 
   application-build:
     name: application build against the pinned SDK
