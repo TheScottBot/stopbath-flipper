@@ -115,10 +115,14 @@ static bool apply_command(DevelopmentPeerCore* peer, char* line) {
     return true;
 }
 
-static int open_serial_device(const char* path) {
+static int open_serial_device_quiet(const char* path, bool quiet) {
     int descriptor = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if(descriptor < 0) {
-        fprintf(stderr, "cannot open %s: %s\n", path, strerror(errno));
+        /* A node that simply does not exist is not worth reporting while
+         * probing every candidate; a real permission or busy error is. */
+        if(!quiet || (errno != ENOENT && errno != ENXIO)) {
+            fprintf(stderr, "cannot open %s: %s\n", path, strerror(errno));
+        }
         return -1;
     }
     struct termios settings;
@@ -139,6 +143,10 @@ static int open_serial_device(const char* path) {
         return -1;
     }
     return descriptor;
+}
+
+static int open_serial_device(const char* path) {
+    return open_serial_device_quiet(path, false);
 }
 
 /* Drains the peer's output to the device and reads whatever the device has
@@ -180,49 +188,54 @@ static bool looks_like_hello(const uint8_t* buffer, size_t length) {
 }
 
 /* Probes one serial node: opens it (which asserts DTR and makes the
- * application send its HELLO), reads briefly, and reports whether a HELLO
- * arrived. Closes the node either way. */
-static bool node_is_the_application(const char* path) {
-    int device = open_serial_device(path);
-    if(device < 0) return false;
-    bool is_application = false;
+ * application send its HELLO), reads briefly, and if a HELLO arrives keeps the
+ * node open and feeds every byte read into the peer, so the HELLO that
+ * identified the channel is the one the handshake sees rather than being
+ * consumed. Returns the open descriptor, or -1 if this is not the
+ * application (closing it first). */
+static int probe_node(DevelopmentPeerCore* peer, const char* path) {
+    int device = open_serial_device_quiet(path, true);
+    if(device < 0) return -1;
     uint8_t buffer[512];
-    for(int attempt = 0; attempt < 10 && !is_application; attempt++) {
+    for(int attempt = 0; attempt < 10; attempt++) {
         usleep(100000);
         ssize_t received = read(device, buffer, sizeof(buffer));
         if(received > 0 && looks_like_hello(buffer, (size_t)received)) {
-            is_application = true;
+            development_peer_feed(peer, buffer, (size_t)received);
+            return device;
         }
     }
     close(device);
-    return is_application;
+    return -1;
 }
 
 /*
- * Finds the peripheral's application channel and opens it. The serial node
- * number is not stable across a reattachment on this platform (the evaluation
- * log records it, and the real appliance uses a udev rule matching the device
- * by serial and interface). A development tool cannot assume a fixed node, so
- * it probes each ttyACM node for the HELLO only the application sends, and
- * opens the one that answers. A preferred path is tried first. Blocks until
- * the application is found, so the peer survives a cable pull without being
- * restarted. The freshly opened node asserts DTR again, so the application
- * sends a HELLO the caller then handshakes on.
+ * Finds the peripheral's application channel and returns it open. The serial
+ * node number is not stable across a reattachment on this platform (the
+ * evaluation log records it, and the real appliance uses a udev rule matching
+ * the device by serial and interface). A development tool cannot assume a
+ * fixed node, so it probes each ttyACM node for the HELLO only the application
+ * sends. A preferred path is tried first. Blocks until the application is
+ * found, so the peer survives a cable pull without being restarted.
  */
 #define MAX_SERIAL_NODE 16
 
-static int find_application_channel(const char* preferred, char* found_path, size_t found_capacity) {
+static int find_application_channel(DevelopmentPeerCore* peer, const char* preferred, char* found_path, size_t found_capacity) {
     for(;;) {
-        if(preferred != NULL && node_is_the_application(preferred)) {
-            snprintf(found_path, found_capacity, "%s", preferred);
-            return open_serial_device(preferred);
+        if(preferred != NULL && preferred[0] != '\0') {
+            int device = probe_node(peer, preferred);
+            if(device >= 0) {
+                snprintf(found_path, found_capacity, "%s", preferred);
+                return device;
+            }
         }
         for(int node_index = 0; node_index < MAX_SERIAL_NODE; node_index++) {
             char path[32];
             snprintf(path, sizeof(path), "/dev/ttyACM%d", node_index);
-            if(node_is_the_application(path)) {
+            int device = probe_node(peer, path);
+            if(device >= 0) {
                 snprintf(found_path, found_capacity, "%s", path);
-                return open_serial_device(path);
+                return device;
             }
         }
         usleep(300000);
@@ -237,7 +250,7 @@ static int reopen_device(DevelopmentPeerCore* peer, char* path, size_t path_capa
     if(old_device >= 0) close(old_device);
     development_peer_link_dropped(peer);
     fprintf(stderr, "device gone; searching for the peripheral...\n");
-    int device = find_application_channel(path, path, path_capacity);
+    int device = find_application_channel(peer, path, path, path_capacity);
     fprintf(stderr, "peripheral back on %s\n", path);
     return device;
 }
@@ -262,7 +275,7 @@ int main(int argument_count, char** arguments) {
         bool find_by_probe = strcmp(arguments[1], "auto") == 0;
         if(find_by_probe) {
             fprintf(stderr, "searching for the peripheral...\n");
-            device = find_application_channel(NULL, device_path, sizeof(device_path));
+            device = find_application_channel(&peer, NULL, device_path, sizeof(device_path));
         } else {
             device = open_serial_device(arguments[1]);
         }

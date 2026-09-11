@@ -5,6 +5,7 @@
 #include <furi.h>
 #include <furi_hal_usb.h>
 #include <furi_hal_usb_cdc.h>
+#include <furi_hal_power.h>
 #include <cli/cli_vcp.h>
 
 /* The link runs on channel 1 (usb_cdc_dual), leaving the firmware command
@@ -138,6 +139,13 @@ bool remote_transport_open(RemoteTransport* transport) {
     };
     furi_hal_cdc_set_callbacks(LINK_CHANNEL, (CdcCallbacks*)&callbacks, transport);
 
+    /* Stop drawing charge current from the appliance while the link is up.
+     * The appliance shares a tight USB power budget with the guest radio
+     * (evaluation log 4.3, FD10), and a charging peripheral both loads that
+     * budget and makes an unplug a larger current transient. Reference
+     * counted in the firmware, so the matching exit in close is required. */
+    furi_hal_power_suppress_charge_enter();
+
     /* Seed the observed facts from the current line state, so a port already
      * open when the application starts is noticed on the first service. */
     transport->usb_present = true;
@@ -156,6 +164,7 @@ void remote_transport_close(RemoteTransport* transport) {
         remote_session_port_closed(transport->session);
         transport->port_open = false;
     }
+    furi_hal_power_suppress_charge_exit();
     furi_hal_cdc_set_callbacks(LINK_CHANNEL, NULL, NULL);
     furi_hal_usb_unlock();
     furi_hal_usb_set_config(&usb_cdc_single, NULL);
