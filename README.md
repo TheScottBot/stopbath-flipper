@@ -12,9 +12,9 @@ and the meaning of every button. The specification is
 
 ## Status
 
-Phase `FE1`, first light: the application launches, draws, shows which button
-was pressed, and implements the screen lock. It talks to nothing yet. The
-protocol is drafted in `FE3`; see `PROTOCOL.md`.
+Phase `FE2`, display: the application renders every display state from a
+fixture, cycling through them on the device, and implements the screen lock.
+It talks to nothing yet. The protocol is drafted in `FE3`; see `PROTOCOL.md`.
 
 Hardware gates cleared by the author are recorded in
 `HARDWARE_COMPATIBILITY.md`. Nothing in this repository claims a hardware gate
@@ -71,6 +71,19 @@ MinGW `gcc` on Windows does not ship. Run it under WSL or on Linux:
 make test-sanitise
 ```
 
+The font metrics table used for text truncation is generated from the pinned
+firmware's font data and checked in. To regenerate it, check the firmware out
+at the pinned tag beside this repository and point the generator at its font
+source:
+
+```bash
+git clone --depth 1 --branch unlshd-086 https://github.com/DarkFlippers/unleashed-firmware.git ../unleashed-firmware
+```
+
+```bash
+py -3 scripts/generate_font_metrics.py ../unleashed-firmware/lib/u8g2/u8g2_fonts.c
+```
+
 The typography scan required by specification 0.8:
 
 ```bash
@@ -84,6 +97,7 @@ make check-typography PYTHON="py -3"
 | `application.fam` | the application manifest |
 | `stopbath_remote.c` | the SDK facing application, kept thin |
 | `remote_input/` | pure logic: what a press does to the device, no SDK |
+| `remote_display/` | pure logic: what goes where on the screen, the shared display fixtures, and the generated font metrics, no SDK |
 | `tests/` | host tests and the shared test harness |
 | `scripts/` | repository checks |
 | `docs/evaluation/` | the Plan stage evidence log |

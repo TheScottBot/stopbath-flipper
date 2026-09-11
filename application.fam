@@ -4,9 +4,10 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="stopbath_remote_main",
     requires=["gui"],
-    # Generous for a first light build; measured against the device with the
-    # CLI "top" and "free" commands at the FE1 hardware gate and reduced then.
-    stack_size=2 * 1024,
+    # Screen composition runs on this thread (the GUI service thread has only
+    # 2 KB), so this is sized generously; measured against the device with the
+    # CLI "top" command at the FE2 hardware gate and reduced then.
+    stack_size=4 * 1024,
     fap_category="Tools",
     fap_version="0.1",
     fap_description="Physical remote for a StopBath appliance",

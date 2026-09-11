@@ -22,9 +22,7 @@ states the contract, what was done instead, why, and the test that holds it.
 - What this is not: a recommendation that the appliance ever sees it. The
   exit is presentation lifecycle, which specification 2.2 gives to the
   Flipper, and no verb will carry it.
-- Author decision requested: whether this stands, or whether the application
-  should have no in-application exit. Raised 2026-09-11 alongside the `FE1`
-  reproduction report. Provisional until answered.
+- Author decision: CONFIRMED 2026-09-11. The exit stands.
 - Covering tests: `a_long_back_press_while_unlocked_requests_exit` and
   `a_long_back_press_while_locked_is_suppressed` in
   `tests/test_remote_input_model.c`.

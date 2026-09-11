@@ -17,19 +17,22 @@ device is recorded here with the date; anything not yet measured says so.
 | SD card application pack variant | not yet read from the device | the author reads it from the Apps menu; it does not affect the API |
 | Toolchain | `gcc-arm-none-eabi 12.3`, Flipper package 39 | `scripts/toolchain/fbtenv.sh` at that commit |
 | Build tool | `ufbt 0.2.6` with the release SDK zip | `FD1` |
+| Device name | `Arbuntal`, reported by `ufbt launch` as `FLIP_ARBUNTAL` on `COM5` | author's host, 2026-09-11; the CLI channel of the device |
+| Installed path on the device | `/ext/apps/Tools/stopbath_remote.fap` | `ufbt launch`, from `fap_category` in the manifest |
 
 ## Hardware gates
 
 | Phase | Gate | Status |
 |---|---|---|
-| `FE1` | launches on the author's Flipper, draws, reports every press in the control table; free heap read from the screen | NOT YET CLEARED |
+| `FE1` | launches on the author's Flipper, draws, reports every press in the control table; free heap read from the screen | PARTLY CLEARED 2026-09-11 by the author: installed and launched with `py -3 -m ufbt launch`, drew, and showed each button press on screen. Still to confirm: lock and unlock, hold Back to exit, and the on-screen free heap figure. The FE1 debug screen has since been replaced by the FE2 screens; the heap figure will return in the FE3 diagnostic view. |
+| `FE2` | every display state legible on the device in daylight at arm's length | NOT YET CLEARED. The application cycles through all fourteen fixtures every four seconds. |
 
 ## Measurements owed
 
 | Measurement | Owed to | Status |
 |---|---|---|
 | free heap with the application running | evaluation log 4.1 | unmeasured; shown on the `FE1` screen |
-| stack actually used, via the CLI `top` command | `application.fam` `stack_size` | unmeasured; set to 2048 bytes for first light |
+| stack actually used, via the CLI `top` command | `application.fam` `stack_size` | unmeasured; set to 4096 bytes since FE2 composes the screen on the application thread |
 | total USB draw with the guest radio adapter and the Flipper both active | `FD10`, extension 5.3 | unmeasured |
 | QR scanning across a representative set of phones | `FD11`, 4.4 | not started |
 | daylight readability at arm's length | `FE2` gate, 4.4 | not started |

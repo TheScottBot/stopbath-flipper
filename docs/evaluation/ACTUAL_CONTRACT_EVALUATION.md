@@ -30,7 +30,8 @@ uncertainties, and which author decisions are still open.
 | 4.4 | Display and QR | Display geometry and drawing primitives confirmed from source. Rendering time, memory, daylight readability and scanning are HARDWARE. QR encoder candidate identified, not yet accepted. |
 | NFC | `FD15`, `FD16`, `FD17` | Runtime NDEF presentation has a real API surface (Type 4 Tag listener). All three decisions remain HARDWARE. |
 | Lock | `FD19` | ANSWERED from source: the firmware lock is not reachable from an application. An application level lock is required. |
-| FE1 | Toolchain proof | DONE 2026-09-11. `ufbt 0.2.6` deploys the Unleashed SDK zip directly; the application builds warning clean at API 87.6; the host tests pass. Hardware gate outstanding. |
+| FE1 | Toolchain proof | DONE 2026-09-11. `ufbt 0.2.6` deploys the Unleashed SDK zip directly; the application builds warning clean at API 87.6; the host tests pass on MinGW and under the sanitisers in WSL. Hardware gate partly cleared by the author the same day. |
+| FE2 | Display | DONE 2026-09-11 on the automated side. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Hardware gate (daylight legibility) outstanding. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -43,7 +44,7 @@ uncertainties, and which author decisions are still open.
 | clang, cl | absent | `where.exe clang cl` found neither. |
 | Python | 3.14.7 via the `py` launcher | The bare `python` command resolves to the Microsoft Store stub and does not run. |
 | ufbt | 0.2.6 | Installed 2026-09-11 with `py -3 -m pip install --user ufbt`. Its `--help` auto-deployed the official 1.4.3 SDK into `~/.ufbt`, which this repository does not use; the per-project checkout under `.ufbt/` is the Unleashed one, see 4.1. |
-| WSL | WSL 2, Ubuntu 26.04 LTS, `aarch64` | Present, but has no `gcc` or `make` and `sudo` needs a password, so the sanitiser build was not run there in this session. The author runs `sudo apt-get install -y build-essential` once; continuous integration runs the sanitiser on Linux regardless. |
+| WSL | WSL 2, Ubuntu 26.04 LTS, `aarch64`, `gcc 15.2.0`, GNU Make 4.4.1 | The author installed `build-essential` on 2026-09-11. The sanitiser build (`make test-sanitise`, address and undefined behaviour, no recovery) ran there the same day: 12 of 12 cases pass. This is the development machine path spec 0.10 requires; continuous integration runs the same target on Linux. |
 | git | present | Used read-only throughout, per spec 0.1. |
 
 Consequence, confirmed at FE1: the pure logic builds with the host MinGW compiler
@@ -438,6 +439,30 @@ Observed from source:
   rendered once into an XBM bitmap and drawn with `canvas_draw_xbm`.
 - Fonts (`applications/services/gui/canvas.h:26-30`): `FontPrimary`,
   `FontSecondary`, `FontKeyboard`, `FontBigNumbers`, `FontBatteryPercent`.
+  Mapped in `canvas.c:165-173` to `u8g2_font_helvB08_tr`,
+  `u8g2_font_haxrcorp4089_tr`, `u8g2_font_profont11_mr`,
+  `u8g2_font_profont22_tn` and `u8g2_font_5x7_tr`; parameters at
+  `canvas.c:9-14` (Primary height 8, leading 12; Secondary height 7, leading
+  11; BigNumbers height 15, leading 18).
+- Glyph advances, DECODED 2026-09-11 from `lib/u8g2/u8g2_fonts.c` at the
+  pinned commit by `scripts/generate_font_metrics.py` (u8g2 font header as
+  read by `u8g2_font_setup`, then each glyph's delta x). Primary: printable
+  average 5.86 px, lowercase 5.62, uppercase 7.35, widest 11 (`@`, `W`).
+  Secondary: average 5.21, lowercase 4.73, uppercase 6.00, widest 9 (`@`).
+  Measured widths of every label the FD3 layouts place, all of which fit
+  their area: the tightest is `999+ delivered` at 64 px in the 66 px column
+  (Secondary). Centred Primary lines are at most 85 px (`Recovery needed`)
+  in 124 px.
+- Consequence for `FD8`, recorded here rather than decided: the error band
+  is 124 px in Secondary, and upper case with underscores runs about 6 px a
+  character, so an error code longer than about 20 characters is truncated
+  on this display. `TERMINATION_NOT_PERMITTED` from the seam document's
+  proposal measures 142 px. Either the codes stay at or under 20 characters
+  or the device shows their start; the protocol draft in FE3 should choose
+  knowingly.
+- The GUI service thread has a 2 KB stack (`applications/services/gui/application.fam:11`),
+  which is what a view port's draw callback runs on. The application composes
+  its screen on its own thread and only replays it from the draw callback.
 - Backlight: `sequence_display_backlight_enforce_on`,
   `sequence_display_backlight_enforce_auto`, `sequence_display_backlight_off` are
   exported notification sequences (`api_symbols.csv:5385-5388`). The application
@@ -549,14 +574,15 @@ records why.
 |---|---|
 | `FD1` Language and toolchain | DECIDED by the author 2026-09-11: C, built against the release SDK zip `flipper-z-f7-sdk-unlshd-086.zip` with `ufbt`. Toolchain is `gcc-arm-none-eabi 12.3`, package 39. CONFIRMED at FE1 the same day: `ufbt 0.2.6` accepts the zip and the application builds, see 4.1. |
 | `FD2` Transport | DECIDED by the author 2026-09-11: candidate A, USB CDC in `usb_cdc_dual` mode, application on channel 1, firmware CLI kept on channel 0. `PD2` in the extension document must record the same. |
-| `FD3` Display layouts | Geometry now known: 128 by 64, QR occupies 58 by 58 leaving a 70 pixel wide column. Layouts to be drawn against that and put to the author before FE2. |
+| `FD3` Display layouts | DECIDED by the author 2026-09-11: the six screens proposed against the measured geometry (header band 0 to 11 with the lock shown there; READY with a centre button hint; QR page with the code at 0,3 size 58 and a 66 pixel text column from x 62; TERMINATING, RECOVERY_REQUIRED and NOT CONNECTED as two centred lines; a 12 pixel inverted error band at y 52). Font metrics from `applications/services/gui/canvas.c:9-14` at the pinned commit: Primary `helvB08` height 8, Secondary `haxrcorp4089` height 7, BigNumbers `profont22` height 15. Implemented as the pure layout in `remote_display/`. |
 | `FD4` Wi-Fi QR viability | Arithmetic in 4.4 says a Wi-Fi payload with SSID and passphrase cannot fit version 1. Options remain as the spec lists them. HARDWARE for anything beyond the arithmetic. |
 | `FD10` Power | Charge suppression is available. Measurement outstanding. |
 | `FD11` Phones | Not started. |
 | `FD12` Firmware distribution | ANSWERED by the author 2026-09-11: Unleashed, `unlshd-086`. The variant question is CLOSED as irrelevant to the API, see 4.1. |
 | `FD13` Name and licence | DECIDED by the author 2026-09-11: `stopbath-flipper`, MIT, `Copyright (c) 2026 TheScottBot`, the same text as the StopBath `LICENSE`. |
+| FE2 application stack | 4096 bytes in `application.fam`, unmeasured; the composed layout is 696 bytes and the display state 308, both held statically, with one further layout on the stack during composition. Measured with the CLI `top` command at the FE2 gate. |
 | Long press duration (Appendix A) | DECIDED by the author 2026-09-11 for FE1: the firmware's own `InputTypeLong` classification, 300 ms at the pinned commit, isolated behind one function in `stopbath_remote.c`. Revisited with the device in hand at FE4, when `CENTER_LONG` first means something. |
-| Back long press exits | PROVISIONAL, taken by this evaluation on 2026-09-11 and recorded in `IMPLEMENTATION_DEVIATIONS.md` for the author to confirm or reverse. |
+| Back long press exits | CONFIRMED by the author 2026-09-11. Recorded in `IMPLEMENTATION_DEVIATIONS.md`. |
 | `FD15`, `FD16`, `FD17` NFC | API surface exists; all three HARDWARE. |
 | `FD18` Guest gallery address | Blocked on the `D30` reference and the `guest.stopbath.photo` conflict in the main repository, both raised to the author 2026-09-11. |
 | `FD19` Screen lock | ANSWERED from source: application level lock. |

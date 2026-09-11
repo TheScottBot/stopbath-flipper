@@ -18,26 +18,37 @@ HOST_CFLAGS := $(HOST_WARNINGS) -O1 -g
 SANITISER_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
 
 BUILD_DIR := build/host
-PURE_LOGIC_SOURCES := remote_input/remote_input_model.c
-PURE_LOGIC_HEADERS := remote_input/remote_input_model.h
-TEST_SOURCES := tests/test_remote_input_model.c
+
+# Every pure logic module, compiled into every suite. Adding a module here is
+# the only change needed for the tests to see it.
+PURE_LOGIC_SOURCES := remote_input/remote_input_model.c \
+                      remote_display/remote_display_layout.c \
+                      remote_display/remote_display_fixtures.c \
+                      remote_display/remote_font_metrics.c \
+                      remote_display/remote_font_measure.c
+PURE_LOGIC_HEADERS := $(wildcard remote_input/*.h remote_display/*.h)
+
+# One binary per suite, named after its source.
+TEST_SOURCES := $(wildcard tests/test_*.c)
 TEST_HEADERS := tests/test_support.h
+TEST_BINARIES := $(patsubst tests/%.c,$(BUILD_DIR)/%,$(TEST_SOURCES))
+SANITISED_TEST_BINARIES := $(patsubst tests/%.c,$(BUILD_DIR)/%_sanitised,$(TEST_SOURCES))
 
 .PHONY: test test-sanitise check-typography check clean
 
-test: $(BUILD_DIR)/test_remote_input_model
-	$(BUILD_DIR)/test_remote_input_model
+test: $(TEST_BINARIES)
+	@for suite in $(TEST_BINARIES); do echo "== $$suite"; $$suite || exit 1; done
 
-test-sanitise: $(BUILD_DIR)/test_remote_input_model_sanitised
-	$(BUILD_DIR)/test_remote_input_model_sanitised
+test-sanitise: $(SANITISED_TEST_BINARIES)
+	@for suite in $(SANITISED_TEST_BINARIES); do echo "== $$suite"; $$suite || exit 1; done
 
-$(BUILD_DIR)/test_remote_input_model: $(PURE_LOGIC_SOURCES) $(TEST_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS)
+$(BUILD_DIR)/%: tests/%.c $(PURE_LOGIC_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(HOST_CFLAGS) -o $@ $(PURE_LOGIC_SOURCES) $(TEST_SOURCES)
+	$(CC) $(HOST_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES)
 
-$(BUILD_DIR)/test_remote_input_model_sanitised: $(PURE_LOGIC_SOURCES) $(TEST_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS)
+$(BUILD_DIR)/%_sanitised: tests/%.c $(PURE_LOGIC_SOURCES) $(PURE_LOGIC_HEADERS) $(TEST_HEADERS)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(HOST_CFLAGS) $(SANITISER_CFLAGS) -o $@ $(PURE_LOGIC_SOURCES) $(TEST_SOURCES)
+	$(CC) $(HOST_CFLAGS) $(SANITISER_CFLAGS) -o $@ $< $(PURE_LOGIC_SOURCES)
 
 check-typography:
 	$(PYTHON) scripts/check_typography.py
