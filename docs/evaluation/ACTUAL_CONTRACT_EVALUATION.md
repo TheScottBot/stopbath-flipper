@@ -19,7 +19,7 @@ uncertainties, and which author decisions are still open.
   only places a double hyphen appears, and the scan built in FE1 must exempt
   exactly those and nothing else.
 
-## Status summary (last updated 2026-09-11, after FE1)
+## Status summary (last updated 2026-09-11, after FE2 and the surface experiments)
 
 | Section | Topic | Status |
 |---|---|---|
@@ -31,7 +31,8 @@ uncertainties, and which author decisions are still open.
 | NFC | `FD15`, `FD16`, `FD17` | Runtime NDEF presentation has a real API surface (Type 4 Tag listener). All three decisions remain HARDWARE. |
 | Lock | `FD19` | ANSWERED from source: the firmware lock is not reachable from an application. An application level lock is required. |
 | FE1 | Toolchain proof | DONE 2026-09-11. `ufbt 0.2.6` deploys the Unleashed SDK zip directly; the application builds warning clean at API 87.6; the host tests pass on MinGW and under the sanitisers in WSL. Hardware gate partly cleared by the author the same day. |
-| FE2 | Display | DONE 2026-09-11 on the automated side. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Hardware gate (daylight legibility) outstanding. |
+| FE2 | Display | DONE 2026-09-11. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Gate cleared by the author the same day, indoors. |
+| Experiments | `FD4`, `FD15` to `FD17` | DONE 2026-09-11, brought forward from FE5 and FE6 at the author's direction so the two guest facing surfaces were proven on hardware before any protocol or appliance work. Both surfaces work. Recorded as a build order deviation in `IMPLEMENTATION_DEVIATIONS.md`. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -457,9 +458,11 @@ Observed from source:
   is 124 px in Secondary, and upper case with underscores runs about 6 px a
   character, so an error code longer than about 20 characters is truncated
   on this display. `TERMINATION_NOT_PERMITTED` from the seam document's
-  proposal measures 142 px. Either the codes stay at or under 20 characters
-  or the device shows their start; the protocol draft in FE3 should choose
-  knowingly.
+  proposal measures 142 px. Beside a code the band is narrower still, 66 px,
+  about 11 upper case characters, because it cannot cross the code. Either
+  the codes stay short (11 characters fit everywhere, 20 fit off the code
+  page) or the device shows their start; the protocol draft in FE3 should
+  choose knowingly.
 - The GUI service thread has a 2 KB stack (`applications/services/gui/application.fam:11`),
   which is what a view port's draw callback runs on. The application composes
   its screen on its own thread and only replays it from the draw callback.
@@ -492,25 +495,52 @@ representative set of phones (`FD11`), including the Google camera application
 join path failure recorded in the main repository's 4.6, which applies to any
 Wi-Fi QR regardless of what displays it.
 
-### QR encoder, candidate dependency (spec 0.12), NOT yet accepted
+### QR encoder, dependency record (spec 0.12), ADDED 2026-09-11
 
-Evaluated 2026-09-11, recorded so the author's decision rests on evidence.
+Added for the author's FD4 experiment (a real Wi-Fi payload rendered on the
+device), which brings the encoder forward from FE5. The FE5 criteria that are
+not yet met are listed at the end and are not claimed.
 
 | Item | Observed |
 |---|---|
-| Candidate | `https://github.com/nayuki/QR-Code-generator`, the C implementation (`c/qrcodegen.c`, `c/qrcodegen.h`) |
-| Latest release | `v1.8.0`, published 2022-04-17 (GitHub API, 2026-09-11) |
-| Repository activity | last push 2026-08-31, not archived (GitHub API, 2026-09-11) |
-| Licence | to be read from the repository's `Readme.markdown` and the source header at the pinned commit before acceptance; NOT recorded here from memory |
+| Dependency | `https://github.com/nayuki/QR-Code-generator`, the C implementation |
+| Pinned at | tag `v1.8.0`, commit `720f62bddb7226106071d4728c292cb1df519ceb`, 2022-04-17, confirmed with `git ls-remote --tags` before a shallow clone |
+| Files vendored | `c/qrcodegen.c` (1022 lines) and `c/qrcodegen.h` (385 lines), unmodified, under `lib/qrcodegen/` with `PROVENANCE.md` carrying their sha256 digests |
+| Behaviour provided | QR Model 2 encoding of text into a module matrix: mode selection, Reed-Solomon error correction, mask selection, version selection within a caller supplied range |
+| Why the SDK is insufficient | the firmware at the pinned commit contains no QR encoder (`grep -rli qrcodegen` and `qrcode` over the tree returned nothing), and the error correction and masking are not something to write by hand (spec 0.12 guidance) |
+| Maintenance status | last upstream push 2026-08-31, not archived (GitHub API, 2026-09-11); the C implementation has not changed since `v1.8.0` in a way this project depends on, and the pin is by commit |
+| Licence | MIT, in the header of both files and in the upstream `Readme.markdown` at that commit, copied to `lib/qrcodegen/LICENSE.txt`. Same licence as this repository and StopBath |
+| Size on device | the FAP grew from 12,080 to 20,164 bytes with the encoder, the wrapper, the bitmap and the fixtures; `.text` from 7,027 to 11,904 bytes |
+| Allocation | none on the heap, stated in the source header (`qrcodegen.c:45-46`) and confirmed by grep: no `malloc`, `calloc`, `free` or `alloca`. Buffers are caller supplied and sized by `qrcodegen_BUFFER_LEN_FOR_VERSION`, 106 bytes for the version 3 ceiling |
+| Security implications | it consumes the payload the appliance supplies, which is untrusted input on the same terms as the rest of the protocol. It writes only into the two caller sized buffers, both bounded at compile time in `remote_display/remote_qr.h`. `qrcodegen_encodeText` refuses rather than overruns when the text does not fit the version range. It runs under the sanitiser build on every test run |
+| Test strategy | `tests/test_remote_qr.c`: version selection for the two experiment payloads, finder patterns at the three corners, the 53 byte bound of version 3 at the lowest error correction exactly at and one over, empty payload refused, bitmap placement. Matching full matrices against published vectors is FE5's criterion and is NOT yet done |
+| Replacement cost | the wrapper in `remote_display/remote_qr.c` is the only caller, four functions, and holds the version ceiling; another encoder would replace one file and the private library entry |
+| Warnings | compiles clean under the SDK's set on the device and on MinGW gcc 15. Linux gcc 15 on aarch64 flags `-Wconversion` at four lines inside the library; that flag is this project's extra above the SDK set, so the host build applies the SDK set to vendored code and the extras to project code (`Makefile`) |
 
-The behaviour it would provide, and why the SDK is insufficient: the firmware at
-this commit contains no QR encoder (`grep -rli qrcodegen` and `qrcode` over the
-tree returned nothing), and QR Model 2 needs Reed-Solomon error correction and mask
-selection, which spec 0.12 guidance says not to write by hand. The remaining 0.12
-items (size on device, allocation behaviour, security implications, test strategy
-against published vectors, replacement cost) are to be recorded once the source is
-read at a pinned commit, which has not happened. No source from this candidate has
-been read yet, so nothing about its API is claimed.
+Display ceiling, derived and now enforced in `remote_display/remote_qr.h`: the
+58 pixel code area at two pixels per module holds 29 modules, which is version
+3. Version 4 (33 modules) does not fit at two pixels. So version 3 is the
+ceiling this display imposes, and the wrapper refuses anything larger rather
+than drawing something unscannable. Capacities that matter, from the library's
+own tables at the lowest error correction, byte mode: version 1 holds 17,
+version 2 holds 32, version 3 holds 53. Error correction starts at the lowest
+level and the library raises it when the same version has room.
+
+Consequences for `FD4`, arithmetic only, scanning is HARDWARE:
+
+- The author's experiment payload, a fifteen character SSID and an eight
+  character passphrase in StopBath's grammar (kept out of the repository in
+  `experiment_credentials.h`, see the example header), is 41 bytes: version
+  3, filling the code area with no quiet zone inside it.
+  The quiet zone is whatever surrounds the area: three pixels above, three
+  below, two to the right, and the screen edge to the left.
+- A real session payload in StopBath's grammar, `StopBath-2AWZS7` and a twenty
+  character passphrase, is 53 bytes: exactly version 3's ceiling at the lowest
+  error correction. One more character of SSID or passphrase and the Wi-Fi
+  page cannot be shown at this size. The memorable passphrase style
+  (`adjective.noun.NNN`, up to about 18 characters) fits with a little room.
+- The gallery address `HTTP://192.168.72.1/`, upper case for alphanumeric
+  mode, is version 1 at 42 pixels, centred with a four module quiet zone.
 
 ## NFC: `FD15`, `FD16`, `FD17`
 
@@ -540,10 +570,107 @@ HARDWARE, and no in-tree Wi-Fi record construction exists to lean on: the only
 NDEF code in `applications/` is the reader-side parser plugin
 `applications/main/nfc/plugins/supported_cards/ndef.c`.
 
-The NDEF record grammar itself (the URI record, the Wi-Fi Simple Configuration
-record) has not been read from its specifications and is not claimed here. That is
-FE5's evidence to gather, and FE5 does not begin until the three decisions above
-are answered.
+### NDEF record construction, READ 2026-09-11 for the FD15 to FD17 experiment
+
+The record grammar was taken from two implementations that read it, not from
+the NFC Forum or Wi-Fi Alliance specifications, which were not consulted:
+
+- The firmware's own NDEF parser,
+  `applications/main/nfc/plugins/supported_cards/ndef.c` at the pinned
+  commit: the record header flags byte (message begin 0x80, message end
+  0x40, chunk 0x20, short record 0x10, identifier length present 0x08, type
+  name format in the low three bits, lines 76 to 87), the header walk (type
+  length, one or four byte payload length, optional identifier length, type,
+  lines 684 to 730), the URI prefix table (lines 92 to 110: 0x03 is
+  `http://`, 0x04 is `https://`, 0x00 is no prefix), and the Wi-Fi record
+  (lines 482 to 560: media type `application/vnd.wfa.wsc`, credential
+  attribute 0x100E containing SSID 0x1045, network key 0x1027 and
+  authentication type 0x1003 with WPA2 personal 0x0020; attributes are big
+  endian id and length).
+- Android's `NfcWifiProtectedSetup.java`, which the firmware parser cites and
+  which is the thing that has to accept the record. Read at the commit the
+  firmware cites (`025560080737b43876c9d81feff3151f497947e8` in
+  `platform/packages/apps/Nfc`) and again at the current main of the mainline
+  module (`platform/packages/modules/Nfc` commit
+  `b01e3991865799e55d095a30a0b86b5f4030b929`,
+  `NfcNci/src/com/android/nfc/NfcWifiProtectedSetup.java`), identical in
+  what matters: it finds the first record of that media type, walks
+  attributes to the credential, and inside it reads SSID, network key (at
+  most 64 bytes, otherwise null) and authentication type (exactly two bytes,
+  otherwise null); unknown attributes are skipped; a configuration is
+  returned when the SSID is present and a key is present for a non open
+  type. No MAC address, network index or encryption type attribute is read.
+
+So the minimal record Android accepts is a credential with SSID,
+authentication type and network key, which is what
+`remote_display/remote_ndef.c` builds. The record is derived from the same
+Wi-Fi code payload the QR is rendered from, by parsing the grammar StopBath
+emits with its backslash escapes (specification 2.7: one value per page).
+
+### Type 4 Tag emulation, READ 2026-09-11
+
+`lib/nfc/protocols/type_4_tag/type_4_tag_listener_i.c` at the pinned commit
+implements the ISO7816 file system a reader expects: SELECT by name for the
+NDEF application, SELECT by identifier for the capability container (0xE103)
+and the NDEF file (0xE104 unless the data is tag specific), READ BINARY of a
+capability container synthesised by `type_4_tag_cc_dump` from the data
+(defaults when `is_tag_specific` is false: NDEF file 0xE104, 2046 bytes
+maximum, no locks), and READ BINARY of the NDEF file with the two byte
+length prepended by the listener itself. `Type4TagData.ndef_data` is
+therefore the bare NDEF message. `type_4_tag_alloc` resets the data, so a
+fresh allocation plus the message plus an identity is the whole model.
+
+Identity: `iso14443_4a_reset` (`iso14443_4a.c:56-68`) sets a minimal ATS
+(TL 1, nothing else) which `iso14443_4a_listener_send_ats` transmits as a
+single byte. The ISO14443-3A layer sends `uid`, `atqa` and `sak` from the
+data (`iso14443_3a_listener.c:44-47`). The firmware decides a card speaks
+ISO14443-4 by `sak & ISO14443A_ATS_BIT` where the bit is `1 << 5`
+(`iso14443_3a.c:6, 162-166`), so the experiment sets SAK 0x20. ATQA is
+{0x44, 0x00}, the value the firmware's unit test uses for a seven byte UID
+card (`applications/debug/unit_tests/tests/nfc/nfc_test.c:215-219`). The UID
+is arbitrary.
+
+MEASURED 2026-09-11 by the author, first attempt, with the minimal one byte
+ATS: an Android phone held to the device for a whole carousel cycle read
+nothing on either page. The phone's NFC was confirmed working in the other
+direction (the Flipper read the phone's payment emulation), which says
+nothing about the phone as reader.
+
+Cause identified from source, not yet confirmed on hardware: with no TB1
+byte, `iso14443_4a_get_fwt_fc_max` (`iso14443_4a.c:240-254`) returns
+`ISO14443_4A_FDT_DEFAULT_FC`, defined at `iso14443_4a.c:14` as
+`ISO14443_3A_FDT_POLL_FC`, 1620 carrier cycles, about 120 microseconds. A
+reader applying the same defaults expects an answer to every block within
+that, and this application answers from a thread. The second build spells
+the ATS out from the bit definitions in `iso14443_4a_i.h:9-23` and the
+decoders in `iso14443_4a.c:222-313`: TL 5, T0 0x78 (TA1, TB1, TC1 present,
+FSCI 8 = 256 byte frames, matching the 3A layer's buffer), TA1 0x80 (106 kbit
+both ways, compulsory), TB1 0x80 (FWI 8, about 77 ms; SFGI 0), TC1 0x02 (CID
+supported). FWI 8 is a choice with margin, not a measurement.
+
+CONFIRMED on hardware 2026-09-11 by the author: with that ATS the phone read
+the Wi-Fi credential record and the cause above stands as the explanation of
+attempt one. Recorded for the appliance side too: the identity a peripheral
+presents over NFC is the peripheral's business and never crosses the link.
+
+The firmware's own emulation path is the reference for the calls:
+`nfc_scene_emulate_on_enter_type_4_tag` in
+`applications/main/nfc/helpers/protocol_support/type_4_tag/type_4_tag.c:165-170`
+does `nfc_listener_alloc(nfc, NfcProtocolType4Tag, data)` then
+`nfc_listener_start(listener, callback, context)`. The Type 4 Tag listener's
+only event is `Type4TagListenerEventTypeCustomCommand`
+(`type_4_tag_listener.h`), raised for commands it does not handle, so a
+successful read produces no event at all; the phone's behaviour is the only
+signal.
+
+Experiment status, HARDWARE, all three still open:
+
+- `FD15` runtime NDEF: the experiment build presents the page's record while
+  the page shows. Whether a phone reads it is the answer.
+- `FD16` simultaneous QR and NFC: the code stays drawn while the listener
+  runs. Whether the display and the NFC worker coexist is the answer.
+- `FD17` Wi-Fi credential Android accepts: the record is what Android's
+  parser reads. Whether the join prompt appears is the answer.
 
 ## Lock: `FD19`
 
@@ -574,8 +701,8 @@ records why.
 |---|---|
 | `FD1` Language and toolchain | DECIDED by the author 2026-09-11: C, built against the release SDK zip `flipper-z-f7-sdk-unlshd-086.zip` with `ufbt`. Toolchain is `gcc-arm-none-eabi 12.3`, package 39. CONFIRMED at FE1 the same day: `ufbt 0.2.6` accepts the zip and the application builds, see 4.1. |
 | `FD2` Transport | DECIDED by the author 2026-09-11: candidate A, USB CDC in `usb_cdc_dual` mode, application on channel 1, firmware CLI kept on channel 0. `PD2` in the extension document must record the same. |
-| `FD3` Display layouts | DECIDED by the author 2026-09-11: the six screens proposed against the measured geometry (header band 0 to 11 with the lock shown there; READY with a centre button hint; QR page with the code at 0,3 size 58 and a 66 pixel text column from x 62; TERMINATING, RECOVERY_REQUIRED and NOT CONNECTED as two centred lines; a 12 pixel inverted error band at y 52). Font metrics from `applications/services/gui/canvas.c:9-14` at the pinned commit: Primary `helvB08` height 8, Secondary `haxrcorp4089` height 7, BigNumbers `profont22` height 15. Implemented as the pure layout in `remote_display/`. |
-| `FD4` Wi-Fi QR viability | Arithmetic in 4.4 says a Wi-Fi payload with SSID and passphrase cannot fit version 1. Options remain as the spec lists them. HARDWARE for anything beyond the arithmetic. |
+| `FD3` Display layouts | DECIDED by the author 2026-09-11: the six screens proposed against the measured geometry (header band 0 to 11 with the lock shown there; READY with a centre button hint; QR page with the code at 0,3 size 58 and a 66 pixel text column from x 62; TERMINATING, RECOVERY_REQUIRED and NOT CONNECTED as two centred lines; a 12 pixel inverted error band at y 52). AMENDED the same day on the author's observation from the device: the header as proposed sat inside the code area. Beside a code, the header, the lock band and the error band are all confined to the column (x 60 to 127); when locked there the product name gives way to LOCKED, since both do not fit 66 pixels. On screens with no code they stay full width. A test now asserts nothing is placed over the code area. Font metrics from `applications/services/gui/canvas.c:9-14` at the pinned commit: Primary `helvB08` height 8, Secondary `haxrcorp4089` height 7, BigNumbers `profont22` height 15. Implemented as the pure layout in `remote_display/`. |
+| `FD4` Wi-Fi QR viability | Arithmetic revised 2026-09-11 with the encoder in hand: a Wi-Fi payload fits version 3, which is the display ceiling, with no quiet zone inside the code area, and a real session payload sits exactly at that ceiling (53 bytes). The author's experiment build renders one for scanning. MEASURED 2026-09-11 by the author: the version 3 code scanned, from about 5 cm. Handset and app pending in `HARDWARE_COMPATIBILITY.md`. A scan that needs 5 cm is a finding for `FD11` and Part 8 (the guest's phone has to come that close), not a failure. |
 | `FD10` Power | Charge suppression is available. Measurement outstanding. |
 | `FD11` Phones | Not started. |
 | `FD12` Firmware distribution | ANSWERED by the author 2026-09-11: Unleashed, `unlshd-086`. The variant question is CLOSED as irrelevant to the API, see 4.1. |
@@ -583,7 +710,7 @@ records why.
 | FE2 application stack | 4096 bytes in `application.fam`, unmeasured; the composed layout is 696 bytes and the display state 308, both held statically, with one further layout on the stack during composition. Measured with the CLI `top` command at the FE2 gate. |
 | Long press duration (Appendix A) | DECIDED by the author 2026-09-11 for FE1: the firmware's own `InputTypeLong` classification, 300 ms at the pinned commit, isolated behind one function in `stopbath_remote.c`. Revisited with the device in hand at FE4, when `CENTER_LONG` first means something. |
 | Back long press exits | CONFIRMED by the author 2026-09-11. Recorded in `IMPLEMENTATION_DEVIATIONS.md`. |
-| `FD15`, `FD16`, `FD17` NFC | API surface exists; all three HARDWARE. |
+| `FD15`, `FD16`, `FD17` NFC | ANSWERED on hardware 2026-09-11 by the author, second attempt (see the NFC section): `FD15` yes, an application can present an NDEF target whose payload is chosen at runtime, through the Type 4 Tag listener; `FD16` yes, the code stayed drawn while the listener ran and the phone read it; `FD17` yes, Android accepted the Wi-Fi credential record built as its parser reads it and the join succeeded; the gallery page's URI record was read and the address opened. Handset: Samsung Galaxy Z Fold3 (the StopBath repository's `IMPLEMENTATION_DEVIATIONS.md` records the author's Fold as `SM-F926B` on Android 15, measured 2026-09-04). iPhone not yet tried. The FE6 phase is therefore not dropped. |
 | `FD18` Guest gallery address | Blocked on the `D30` reference and the `guest.stopbath.photo` conflict in the main repository, both raised to the author 2026-09-11. |
 | `FD19` Screen lock | ANSWERED from source: application level lock. |
 | `PD11` Protocol definition format | No longer blocks anything here. Under the revised build order (extension 1.4, Flipper 2.9) it is taken at promotion, after `FD20`. The seam document's 4.8 proposal is the input to the FE3 draft. |

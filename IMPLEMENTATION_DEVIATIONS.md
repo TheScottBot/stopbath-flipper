@@ -26,3 +26,57 @@ states the contract, what was done instead, why, and the test that holds it.
 - Covering tests: `a_long_back_press_while_unlocked_requests_exit` and
   `a_long_back_press_while_locked_is_suppressed` in
   `tests/test_remote_input_model.c`.
+
+## The QR and NFC surfaces were built and proven before FE3, ahead of their phases
+
+- The contract: the phase order in Stage two of the specification, which
+  places the QR encoder in `FE5` and NFC presentation in `FE6`, both after the
+  protocol (`FE3`) and the transport (`FE4`), and 0.4, which asks that a phase
+  be worked in order with its tests first.
+- What was done instead: on 2026-09-11, with `FE1` and `FE2` cleared, the
+  author directed two experiments before `FE3`: render a real Wi-Fi code and
+  a real gallery address on the device, then present the same two values
+  over NFC. The QR encoder (`lib/qrcodegen`, `remote_display/remote_qr.c`)
+  and the NDEF builder (`remote_display/remote_ndef.c`) were built for them,
+  each tests first with its own suite, and both surfaces were confirmed
+  working on hardware the same day: the version 3 Wi-Fi code scanned, an
+  Android phone joined the network from the Wi-Fi credential record, and
+  opened the gallery address from the URI record.
+- Why: `FD4` and `FD15` to `FD17` were the largest unknowns in the whole
+  plan, and every one of them is a hardware answer. Proving the guest facing
+  surfaces first meant the protocol is now drafted knowing what the device
+  can actually show and present, rather than finding out after the appliance
+  side had been designed around it. That is the same reasoning the revised
+  build order (`PD1`, Flipper 2.9) applies to the protocol, applied one step
+  further.
+- What it does not change: `FE5` and `FE6` still exist and still owe what
+  the experiments did not do. `FE5` owes published matrix vectors and the
+  distinct on screen error for a refused payload. `FE6` owes vectors from a
+  published NDEF source, the iPhone confirmation, and the
+  clearing of the presented record on session end once there is a session.
+  The experiment credentials mechanism (`experiment_credentials.h`) is for
+  the experiments only and is removed when payloads arrive over the link.
+- Author decision: directed by the author, 2026-09-11, and confirmed on
+  completion ("everything is verified").
+- Covering tests: `tests/test_remote_qr.c` and `tests/test_remote_ndef.c`.
+
+## The hyphen run rule is not applied to vendored third party sources
+
+- The contract: specification 0.8, which requires the em dash scan and adds
+  that converter mangled double and triple hyphens must be scanned for in
+  prose as well.
+- What was done instead: `scripts/check_typography.py` applies the em dash and
+  en dash rule to everything, but skips the hyphen run rule under `lib/`, the
+  folder the build system reserves for vendored private libraries. The one
+  library there, `qrcodegen`, has comment banners made of runs of four
+  hyphens and C decrement operators that the rule would flag: 33 hits, none
+  of them prose.
+- Why: the vendored files are upstream's verbatim, pinned by commit and by
+  sha256 digest in `lib/qrcodegen/PROVENANCE.md`. Editing them to satisfy a
+  rule written for this project's own prose would break the provenance, and
+  the rule's purpose (a document converter's damage) does not arise in them.
+  The em dash rule still applies in full and the files pass it.
+- Author decision: taken by this implementation on 2026-09-11 alongside the
+  encoder, for the author to confirm.
+- Covering test: the scan itself, `make check-typography`, which passes with
+  the library present and fails on an em dash placed under `lib/`.

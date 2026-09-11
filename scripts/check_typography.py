@@ -28,6 +28,13 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 EXCLUDED_DIRECTORY_NAMES = {".git", ".ufbt", "build", "dist", "__pycache__"}
 
+# Third party sources vendored verbatim (the build system reserves "lib" for
+# them). Their digests are recorded, so they are not edited to satisfy the
+# hyphen rule, which exists for converter mangled prose that they do not
+# contain. The em dash rule still applies to them in full. Recorded in
+# IMPLEMENTATION_DEVIATIONS.md.
+THIRD_PARTY_DIRECTORY_NAMES = {"lib"}
+
 TEXT_FILE_SUFFIXES = {
     ".c",
     ".h",
@@ -71,12 +78,12 @@ def hyphen_run_is_a_flag(line: str, match: re.Match) -> bool:
     return starts_a_token and followed_by_word
 
 
-def defects_in_line(line: str):
+def defects_in_line(line: str, third_party: bool):
     if EM_DASH in line:
         yield "em dash"
     if EN_DASH in line:
         yield "en dash"
-    if TABLE_SEPARATOR_ROW.match(line):
+    if third_party or TABLE_SEPARATOR_ROW.match(line):
         return
     for match in HYPHEN_RUN.finditer(line):
         if not hyphen_run_is_a_flag(line, match):
@@ -86,6 +93,7 @@ def defects_in_line(line: str):
 def main() -> int:
     defect_count = 0
     for path in iter_text_files(REPOSITORY_ROOT):
+        third_party = any(part in THIRD_PARTY_DIRECTORY_NAMES for part in path.relative_to(REPOSITORY_ROOT).parts)
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -93,7 +101,7 @@ def main() -> int:
             defect_count += 1
             continue
         for line_number, line in enumerate(content.splitlines(), start=1):
-            for reason in defects_in_line(line):
+            for reason in defects_in_line(line, third_party):
                 print(f"{path.relative_to(REPOSITORY_ROOT)}:{line_number}: {reason}")
                 defect_count += 1
     if defect_count:

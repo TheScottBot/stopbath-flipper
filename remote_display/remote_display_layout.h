@@ -68,6 +68,9 @@ typedef struct {
     char error_code[REMOTE_DISPLAY_ERROR_CODE_CAPACITY];
     bool link_connected;
     bool screen_locked;
+    /* Whether the NFC surface is presenting this page's record. Local, like
+     * the lock: the appliance never sends it. */
+    bool nfc_presenting;
 } RemoteDisplayState;
 
 /* Sets every field to the not connected, unlocked, empty state. */

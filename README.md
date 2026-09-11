@@ -12,9 +12,12 @@ and the meaning of every button. The specification is
 
 ## Status
 
-Phase `FE2`, display: the application renders every display state from a
-fixture, cycling through them on the device, and implements the screen lock.
-It talks to nothing yet. The protocol is drafted in `FE3`; see `PROTOCOL.md`.
+Phases `FE1` and `FE2` are cleared, and both guest facing surfaces have been
+proven on hardware ahead of their phases: the application renders every
+display state from a fixture, draws a real QR code for the page's payload,
+and presents the same payload over NFC as a Type 4 Tag, all confirmed with a
+phone. It talks to no appliance yet. The protocol is drafted next, in `FE3`;
+see `PROTOCOL.md`.
 
 Hardware gates cleared by the author are recorded in
 `HARDWARE_COMPATIBILITY.md`. Nothing in this repository claims a hardware gate
@@ -97,7 +100,8 @@ make check-typography PYTHON="py -3"
 | `application.fam` | the application manifest |
 | `stopbath_remote.c` | the SDK facing application, kept thin |
 | `remote_input/` | pure logic: what a press does to the device, no SDK |
-| `remote_display/` | pure logic: what goes where on the screen, the shared display fixtures, and the generated font metrics, no SDK |
+| `remote_display/` | pure logic: what goes where on the screen, the shared display fixtures, the generated font metrics, the QR wrapper, and the NDEF builder, no SDK |
+| `lib/qrcodegen/` | the vendored QR encoder, unmodified, with its licence and provenance |
 | `tests/` | host tests and the shared test harness |
 | `scripts/` | repository checks |
 | `docs/evaluation/` | the Plan stage evidence log |

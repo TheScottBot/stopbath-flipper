@@ -12,6 +12,8 @@ testing deviation with its reason, never left unstated.
 | `tests/test_remote_input_model.c` (FE1) | host, any `gcc` | `make test` |
 | `tests/test_remote_display_layout.c` (FE2) | host, any `gcc` | `make test` |
 | `tests/test_remote_font_metrics.c` (FE2) | host, any `gcc` | `make test` |
+| `tests/test_remote_qr.c` (FE5, brought forward for the FD4 experiment) | host, any `gcc` | `make test` |
+| `tests/test_remote_ndef.c` (FE6, brought forward for the FD15 to FD17 experiment) | host, any `gcc` | `make test` |
 | all of the above under address and undefined behaviour sanitisers | Linux or WSL | `make test-sanitise` |
 | typography scan (specification 0.8) | any Python 3 | `make check-typography` |
 | application build, warnings as errors, against the pinned SDK | host with `ufbt` | `py -3 -m ufbt` |
@@ -39,6 +41,25 @@ firmware's own glyph advances, generated into
 and pinned by `tests/test_remote_font_metrics.c`, so what the host says fits
 is what the device draws.
 
+FD4 experiment (2026-09-11, ahead of `FE5`): version selection for the two
+experiment payloads, finder patterns at the corners, the version 3 byte
+capacity exactly at and one over the bound, empty payload refused, and the
+two pixel per module bitmap placement, in `tests/test_remote_qr.c`, written
+and seen to fail (5 of 9 cases) before the wrapper was implemented. NOT yet
+done from `FE5`: known payloads against published full matrix vectors, and
+the distinct error the display shows for a refused payload.
+
+FD15 to FD17 experiment (2026-09-11, ahead of `FE6`): full byte vectors for
+the URI record of the gallery address and the Wi-Fi credential record of an
+example payload, unescaping of the grammar's reserved characters, field
+order independence, refusal of every malformed or unsupported payload, and
+the largest credential fitting the buffer, in `tests/test_remote_ndef.c`,
+written and seen to fail (2 of 8 cases passing against a stub, both
+negative) before the builder was implemented. The vectors were written from
+the firmware's NDEF parser and Android's parser, not from the NFC Forum or
+Wi-Fi Alliance specifications; `FE6` proper owes vectors from a published
+source.
+
 Later phases add their own suites and are listed here when they do.
 
 ## Hardware gates
@@ -55,6 +76,19 @@ shown on screen is the number the evaluation log lists as unmeasured.
 every four seconds, is legible on the device in daylight at arm's length. The
 lock band appears on a short Down press over whichever fixture is showing.
 
+FD4 experiment: the Wi-Fi fixture (the credentials in the untracked
+`experiment_credentials.h`, version 3 at 58 pixels with no quiet zone inside
+the area) and the gallery fixture
+(`HTTP://192.168.72.1/`, version 1 at 42 pixels) each scan from a phone at
+arm's length. Record the handset, the app used to scan, distance, and
+lighting in `HARDWARE_COMPATIBILITY.md`.
+
+FD15 to FD17 experiment: while a code page is showing, an Android phone held
+to the back of the device (the NFC antenna is there) offers to join the
+network from the Wi-Fi page, and both an Android phone and an iPhone open the
+gallery address from the gallery page. The code must remain drawn throughout.
+Record handset, operating system version, and which of the three happened.
+
 ## Testing deviations
 
 - The sanitiser build cannot run under the MinGW `gcc` on the Windows
@@ -63,6 +97,11 @@ lock band appears on a short Down press over whichever fixture is showing.
   continuous integration on Linux. Specification 0.10 asks for the sanitiser
   on the development machine; WSL on the same machine is how that is met, and
   it was run there clean on 2026-09-11.
+- The vendored encoder under `lib/qrcodegen/` is compiled on the host with
+  the SDK's warning set rather than this project's stricter set, because
+  Linux gcc 15 flags `-Wconversion` inside it and the file is not edited
+  (see `IMPLEMENTATION_DEVIATIONS.md`). On the device it is compiled under
+  the SDK's set, as everything is, and is clean.
 - The SDK facing glue in `stopbath_remote.c` is not unit tested. It is a
   translation between firmware enumerations and the model's, plus resource
   acquisition and release, and exercising it requires the firmware. The

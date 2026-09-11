@@ -1,10 +1,21 @@
 #include "remote_display_fixtures.h"
 
-/* Fixture text only. A real gallery address is FD18's to settle and a real
- * Wi-Fi payload is built by the appliance; these exist so the QR frame has
- * something to be non-empty about. */
-#define FIXTURE_WIFI_PAYLOAD  "WIFI:T:WPA;S:fixture;P:fixture;;"
-#define FIXTURE_GUEST_PAYLOAD "HTTP://FIXTURE/"
+/* The experiment credentials come from an untracked header when the author
+ * has made one, and from the tracked example otherwise, so the tests and the
+ * continuous integration build never need the real ones. */
+#if __has_include("../experiment_credentials.h")
+#include "../experiment_credentials.h"
+#else
+#include "../experiment_credentials.example.h"
+#endif
+
+/* The experiment payloads. The Wi-Fi grammar is the one StopBath's
+ * BuildGuestJoinPayload produces, assembled here at compile time without
+ * escaping (see experiment_credentials.example.h); the address is the bare
+ * local gateway per D30, upper case so it encodes in alphanumeric mode and
+ * fits version 1. Neither is a wire value. */
+#define FIXTURE_WIFI_PAYLOAD  "WIFI:T:WPA;S:" EXPERIMENT_WIFI_SSID ";P:" EXPERIMENT_WIFI_PASSPHRASE ";;"
+#define FIXTURE_GUEST_PAYLOAD "HTTP://192.168.72.1/"
 
 static const RemoteDisplayFixture fixtures[] = {
     {"not connected",

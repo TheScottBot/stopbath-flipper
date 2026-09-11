@@ -15,6 +15,10 @@
 #define COLUMN_DELIVERED_BASELINE 56
 #define HEADER_RIGHT_X            (REMOTE_DISPLAY_WIDTH - 2)
 #define ERROR_BAND_BASELINE       61
+/* Beside a code, bands start two pixels left of the text column so the
+ * text keeps its margin, and never reach the code area. */
+#define COLUMN_BAND_X             (REMOTE_LAYOUT_COLUMN_X - 2)
+#define COLUMN_BAND_WIDTH         (REMOTE_DISPLAY_WIDTH - COLUMN_BAND_X)
 
 /* Four digits do not fit the column beside the word, and a session lasts
  * minutes, so the count is capped for display rather than truncated mid
@@ -73,15 +77,35 @@ static void add_text(
     placed->text[copy_length] = '\0';
 }
 
-static void compose_header(RemoteDisplayLayout* layout, bool screen_locked) {
+/* The header on a screen with no code: full width, the product name, and
+ * when locked an inverted band with the word at the right (specification
+ * 2.4: the locked state must be obvious at a glance). */
+static void compose_full_width_header(RemoteDisplayLayout* layout, bool screen_locked) {
     if(screen_locked) {
-        /* Inverted band so the locked state is obvious at a glance
-         * (specification 2.4), on every screen including a presented code. */
         add_shape(layout, RemoteLayoutShapeFilledBox, 0, 0, REMOTE_DISPLAY_WIDTH, REMOTE_LAYOUT_HEADER_HEIGHT);
     }
     add_text(layout, 2, REMOTE_LAYOUT_HEADER_BASELINE, RemoteLayoutFontPrimary, RemoteLayoutAnchorLeft, screen_locked, 70, "StopBath");
     if(screen_locked) {
         add_text(layout, HEADER_RIGHT_X, REMOTE_LAYOUT_HEADER_BASELINE, RemoteLayoutFontPrimary, RemoteLayoutAnchorRight, true, 50, "LOCKED");
+    }
+}
+
+/* The header beside a code: confined to the column, because anything drawn
+ * across the code makes it unscannable, and the person scanning is not the
+ * person holding the device. The column is too narrow for both words, so
+ * when locked the product name gives way to the one that matters. */
+static void compose_column_header(RemoteDisplayLayout* layout, bool screen_locked, bool nfc_presenting) {
+    if(screen_locked) {
+        add_shape(layout, RemoteLayoutShapeFilledBox, COLUMN_BAND_X, 0, COLUMN_BAND_WIDTH, REMOTE_LAYOUT_HEADER_HEIGHT);
+        add_text(layout, REMOTE_LAYOUT_COLUMN_X, REMOTE_LAYOUT_HEADER_BASELINE, RemoteLayoutFontPrimary, RemoteLayoutAnchorLeft, true, REMOTE_LAYOUT_COLUMN_WIDTH, "LOCKED");
+    } else {
+        add_text(layout, REMOTE_LAYOUT_COLUMN_X, REMOTE_LAYOUT_HEADER_BASELINE, RemoteLayoutFontPrimary, RemoteLayoutAnchorLeft, false, REMOTE_LAYOUT_COLUMN_WIDTH, "StopBath");
+    }
+    /* A small marker at the right of the header row while the NFC surface is
+     * live, so the photographer can tell a tap will do something. The
+     * longer header word ends at 108 pixels and the marker, 18 pixels wide, starts at 108; the two touch only when locked, where the band carries both. */
+    if(nfc_presenting) {
+        add_text(layout, HEADER_RIGHT_X, REMOTE_LAYOUT_HEADER_BASELINE, RemoteLayoutFontSecondary, RemoteLayoutAnchorRight, screen_locked, 24, "NFC");
     }
 }
 
@@ -123,16 +147,39 @@ static void compose_code_page(RemoteDisplayLayout* layout, const RemoteDisplaySt
     }
 }
 
-static void compose_error_band(RemoteDisplayLayout* layout, const char* error_code) {
-    add_shape(layout, RemoteLayoutShapeFilledBox, 0, REMOTE_LAYOUT_ERROR_BAND_Y, REMOTE_DISPLAY_WIDTH, REMOTE_LAYOUT_ERROR_BAND_HEIGHT);
-    /* The code itself, not a sentence: the appliance owns meaning and this
-     * device owns presentation (specification 2.6). */
-    add_text(layout, CENTRED_X, ERROR_BAND_BASELINE, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, true, REMOTE_DISPLAY_WIDTH - 4, error_code);
+/* The error code itself, not a sentence: the appliance owns meaning and this
+ * device owns presentation (specification 2.6). Full width on a screen with
+ * no code; confined to the column beside one, in the delivered line's row. */
+static void compose_error_band(RemoteDisplayLayout* layout, const char* error_code, bool beside_a_code) {
+    if(beside_a_code) {
+        add_shape(layout, RemoteLayoutShapeFilledBox, COLUMN_BAND_X, REMOTE_LAYOUT_ERROR_BAND_Y, COLUMN_BAND_WIDTH, REMOTE_LAYOUT_ERROR_BAND_HEIGHT);
+        add_text(layout, REMOTE_LAYOUT_COLUMN_X, ERROR_BAND_BASELINE, RemoteLayoutFontSecondary, RemoteLayoutAnchorLeft, true, REMOTE_LAYOUT_COLUMN_WIDTH, error_code);
+    } else {
+        add_shape(layout, RemoteLayoutShapeFilledBox, 0, REMOTE_LAYOUT_ERROR_BAND_Y, REMOTE_DISPLAY_WIDTH, REMOTE_LAYOUT_ERROR_BAND_HEIGHT);
+        add_text(layout, CENTRED_X, ERROR_BAND_BASELINE, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, true, REMOTE_DISPLAY_WIDTH - 4, error_code);
+    }
+}
+
+/* Whether this state puts a code on the screen, which decides where the
+ * header and the error band may go. A page is meaningful only while active
+ * (extension 3.2), and only a known page names something to encode. */
+static bool state_shows_a_code(const RemoteDisplayState* display_state) {
+    if(!display_state->link_connected) return false;
+    bool active = display_state->status == RemoteDisplayStatusPresenting ||
+                  display_state->status == RemoteDisplayStatusGuestConnected;
+    bool page_named = display_state->page == RemoteDisplayPageWifi ||
+                      display_state->page == RemoteDisplayPageGuest;
+    return active && page_named;
 }
 
 void remote_display_layout_compose(const RemoteDisplayState* display_state, RemoteDisplayLayout* layout) {
     memset(layout, 0, sizeof(*layout));
-    compose_header(layout, display_state->screen_locked);
+    bool beside_a_code = state_shows_a_code(display_state);
+    if(beside_a_code) {
+        compose_column_header(layout, display_state->screen_locked, display_state->nfc_presenting);
+    } else {
+        compose_full_width_header(layout, display_state->screen_locked);
+    }
 
     /* Stale content is worse than none: the device cannot know whether what
      * it holds is still true once the link is down (specification 2.5). */
@@ -183,7 +230,7 @@ void remote_display_layout_compose(const RemoteDisplayState* display_state, Remo
     }
 
     if(error_band_shown) {
-        compose_error_band(layout, display_state->error_code);
+        compose_error_band(layout, display_state->error_code, beside_a_code);
     }
 }
 

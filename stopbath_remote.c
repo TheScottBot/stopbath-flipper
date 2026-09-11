@@ -16,9 +16,15 @@
 #include <gui/elements.h>
 #include <gui/gui.h>
 #include <input/input.h>
+#include <nfc/nfc.h>
+#include <nfc/nfc_listener.h>
+#include <nfc/protocols/type_4_tag/type_4_tag.h>
+#include <toolbox/simple_array.h>
 
 #include "remote_display/remote_display_fixtures.h"
 #include "remote_display/remote_display_layout.h"
+#include "remote_display/remote_ndef.h"
+#include "remote_display/remote_qr.h"
 #include "remote_input/remote_input_model.h"
 
 /* Enough for a burst of presses while the main loop is drawing. The input
@@ -30,9 +36,64 @@
 /* How long the main loop waits for an input before checking the carousel. */
 #define MAIN_LOOP_INPUT_WAIT_MILLISECONDS 250
 
-/* Long enough to read a screen and judge it, short enough that all of them
- * come round in under a minute. */
-#define FIXTURE_CAROUSEL_INTERVAL_MILLISECONDS 4000
+/* Long enough to read a screen, judge it, and hold a phone against the
+ * device for the NFC experiment. */
+#define FIXTURE_CAROUSEL_INTERVAL_MILLISECONDS 10000
+
+/*
+ * The identity the NFC surface presents. ATQA and SAK are the values the
+ * firmware's own ISO14443-4 detection expects for a seven byte UID card that
+ * speaks ISO14443-4: the ATQA the firmware's unit test uses for such a card
+ * (applications/debug/unit_tests/tests/nfc/nfc_test.c at the pinned commit)
+ * and the SAK bit the firmware tests in iso14443_3a_supports_iso14443_4
+ * (lib/nfc/protocols/iso14443_3a/iso14443_3a.c:6, ISO14443A_ATS_BIT, 1 << 5).
+ * The UID is arbitrary and fixed; it identifies nothing.
+ */
+static const uint8_t nfc_presentation_uid[] = {0x04, 0x53, 0x42, 0x52, 0x4D, 0x54, 0x01};
+static const uint8_t nfc_presentation_atqa[] = {0x44, 0x00};
+#define NFC_PRESENTATION_SAK_ISO14443_4 0x20
+
+/*
+ * The answer to select. The firmware's reset leaves a one byte ATS, which a
+ * reader decodes as the defaults: 32 byte frames and, per the firmware's own
+ * iso14443_4a_get_fwt_fc_max, a frame waiting time of 1620 carrier cycles,
+ * about 120 microseconds. Answers from this application come from a thread
+ * and cannot meet that, and the author measured a phone reading nothing at
+ * all with it. So the ATS is spelled out, using the bit definitions in
+ * lib/nfc/protocols/iso14443_4a/iso14443_4a_i.h and the decoders in
+ * iso14443_4a.c at the pinned commit:
+ *
+ * - TL 5: this byte and four more.
+ * - T0: TA1, TB1 and TC1 present (bits 4, 5, 6) and FSCI 8, which the
+ *   decoder reads as 256 byte frames, the size the 3A layer's buffer is.
+ * - TA1 0x80: 106 kbit in both directions only, which the decoder reads as
+ *   "both same, compulsory".
+ * - TB1: FWI 8 in the high nibble, which the decoder reads as 4096 << 8
+ *   carrier cycles, about 77 milliseconds; SFGI 0 in the low nibble.
+ * - TC1: CID supported, which the listener honours by taking the CID from
+ *   the RATS; NAD not supported.
+ *
+ * The frame waiting index is a choice, not a measurement: long enough for a
+ * threaded reply with margin, short enough that a reader's retry is prompt.
+ */
+#define NFC_PRESENTATION_ATS_TL  5
+#define NFC_PRESENTATION_ATS_T0  ((1U << 4) | (1U << 5) | (1U << 6) | 8U)
+#define NFC_PRESENTATION_ATS_TA1 (1U << 7)
+#define NFC_PRESENTATION_ATS_TB1 (8U << 4)
+#define NFC_PRESENTATION_ATS_TC1 (1U << 1)
+
+/* The NFC surface for the FD15 to FD17 experiment: a Type 4 Tag listener
+ * serving the NDEF message derived from the page's payload. Started when a
+ * code page is shown, replaced when the payload changes, stopped otherwise. */
+typedef struct {
+    Nfc* nfc;
+    Type4TagData* tag_data;
+    NfcListener* listener;
+    RemoteNdefMessage presented_message;
+    bool presenting;
+    /* Counted on the NFC worker thread, read for the diagnostic line. */
+    uint32_t reader_events;
+} NfcPresentation;
 
 typedef struct {
     FuriMessageQueue* input_event_queue;
@@ -42,6 +103,10 @@ typedef struct {
      * here on the application's own stack and only replayed there. */
     FuriMutex* layout_mutex;
     RemoteDisplayLayout composed_layout;
+    /* Rendered alongside the layout, under the same mutex. Valid only when
+     * the layout shows a code area and the payload encoded. */
+    RemoteQrBitmap code_bitmap;
+    bool code_bitmap_valid;
     /* Main loop only. */
     RemoteInputModel input_model;
     RemoteDisplayState display_state;
@@ -49,7 +114,82 @@ typedef struct {
     uint32_t fixture_shown_at_tick;
     /* Written and read on the GUI thread only. */
     uint32_t dropped_input_events;
+    NfcPresentation nfc_presentation;
 } StopBathRemoteApplication;
+
+/* The Type 4 Tag listener reports only commands it did not understand; every
+ * ordinary read is handled inside the firmware. Counting these is the one
+ * signal available that a reader is talking to the device. */
+static NfcCommand nfc_presentation_listener_callback(NfcGenericEvent event, void* opaque_application_pointer) {
+    UNUSED(event);
+    StopBathRemoteApplication* remote_application = opaque_application_pointer;
+    remote_application->nfc_presentation.reader_events++;
+    return NfcCommandContinue;
+}
+
+static void nfc_presentation_stop(NfcPresentation* presentation) {
+    if(!presentation->presenting) {
+        return;
+    }
+    nfc_listener_stop(presentation->listener);
+    nfc_listener_free(presentation->listener);
+    presentation->listener = NULL;
+    type_4_tag_free(presentation->tag_data);
+    presentation->tag_data = NULL;
+    /* The message held the passphrase; clear it as soon as it is no longer
+     * presented (specification Part 5). */
+    memset(&presentation->presented_message, 0, sizeof(presentation->presented_message));
+    presentation->presenting = false;
+}
+
+static void nfc_presentation_start(NfcPresentation* presentation, const RemoteNdefMessage* message, void* callback_context) {
+    presentation->tag_data = type_4_tag_alloc();
+    furi_check(presentation->tag_data != NULL);
+
+    /* Identity at the ISO14443-3A and 4A layers. The tag data was reset by
+     * its allocation, so the capability container is synthesised by the
+     * firmware with its defaults; the ATS is spelled out above. */
+    Iso14443_4aData* iso14443_4a_data = type_4_tag_get_base_data(presentation->tag_data);
+    furi_check(iso14443_4a_set_uid(iso14443_4a_data, nfc_presentation_uid, sizeof(nfc_presentation_uid)));
+    iso14443_4a_data->ats_data.tl = NFC_PRESENTATION_ATS_TL;
+    iso14443_4a_data->ats_data.t0 = NFC_PRESENTATION_ATS_T0;
+    iso14443_4a_data->ats_data.ta_1 = NFC_PRESENTATION_ATS_TA1;
+    iso14443_4a_data->ats_data.tb_1 = NFC_PRESENTATION_ATS_TB1;
+    iso14443_4a_data->ats_data.tc_1 = NFC_PRESENTATION_ATS_TC1;
+    Iso14443_3aData* iso14443_3a_data = iso14443_4a_get_base_data(iso14443_4a_data);
+    memcpy(iso14443_3a_data->atqa, nfc_presentation_atqa, sizeof(nfc_presentation_atqa));
+    iso14443_3a_data->sak = NFC_PRESENTATION_SAK_ISO14443_4;
+
+    /* The NDEF file content, without the two byte length the listener adds
+     * on the wire itself. */
+    simple_array_init(presentation->tag_data->ndef_data, (uint32_t)message->length);
+    memcpy(simple_array_get_data(presentation->tag_data->ndef_data), message->bytes, message->length);
+
+    presentation->listener = nfc_listener_alloc(presentation->nfc, NfcProtocolType4Tag, presentation->tag_data);
+    furi_check(presentation->listener != NULL);
+    nfc_listener_start(presentation->listener, nfc_presentation_listener_callback, callback_context);
+
+    presentation->presented_message = *message;
+    presentation->presenting = true;
+}
+
+/* Presents the message if it differs from what is already presented, or
+ * stops presenting when there is nothing to present. Restarting on every
+ * recomposition would drop a reader mid-read for a lock band change. */
+static void nfc_presentation_update(StopBathRemoteApplication* remote_application, const RemoteNdefMessage* message) {
+    NfcPresentation* presentation = &remote_application->nfc_presentation;
+    if(message == NULL) {
+        nfc_presentation_stop(presentation);
+        return;
+    }
+    bool unchanged = presentation->presenting && presentation->presented_message.length == message->length &&
+                     memcmp(presentation->presented_message.bytes, message->bytes, message->length) == 0;
+    if(unchanged) {
+        return;
+    }
+    nfc_presentation_stop(presentation);
+    nfc_presentation_start(presentation, message, remote_application);
+}
 
 /* The firmware's button and press enumerations are mapped by explicit
  * switch rather than by numeric equality, so a reordering in a future API
@@ -113,7 +253,7 @@ static Align canvas_alignment_for(RemoteLayoutAnchor anchor) {
 
 /* Replays a composed layout. Shapes first, then texts, then the firmware's
  * own button hint, so inverted text lands on its box and the hint on top. */
-static void replay_layout(Canvas* canvas, const RemoteDisplayLayout* layout) {
+static void replay_layout(Canvas* canvas, const RemoteDisplayLayout* layout, const RemoteQrBitmap* code_bitmap) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
 
@@ -127,9 +267,14 @@ static void replay_layout(Canvas* canvas, const RemoteDisplayLayout* layout) {
     }
 
     if(layout->qr_area_shown) {
-        /* FE5 draws the matrix here. Until then the frame marks the area so
-         * the column beside it can be judged at its real width. */
-        canvas_draw_frame(canvas, layout->qr_x, layout->qr_y, (size_t)layout->qr_size, (size_t)layout->qr_size);
+        if(code_bitmap != NULL) {
+            canvas_draw_xbm(canvas, layout->qr_x, layout->qr_y, (size_t)layout->qr_size, (size_t)layout->qr_size, code_bitmap->bits);
+        } else {
+            /* Nothing encodable: the frame marks the area rather than
+             * drawing something that looks like a code and does not scan.
+             * FE5 gives this a distinct error of its own. */
+            canvas_draw_frame(canvas, layout->qr_x, layout->qr_y, (size_t)layout->qr_size, (size_t)layout->qr_size);
+        }
     }
 
     for(int text_index = 0; text_index < layout->text_count; text_index++) {
@@ -156,7 +301,10 @@ static void draw_screen(Canvas* canvas, void* opaque_application_pointer) {
     if(furi_mutex_acquire(remote_application->layout_mutex, FuriWaitForever) != FuriStatusOk) {
         return;
     }
-    replay_layout(canvas, &remote_application->composed_layout);
+    replay_layout(
+        canvas,
+        &remote_application->composed_layout,
+        remote_application->code_bitmap_valid ? &remote_application->code_bitmap : NULL);
     furi_mutex_release(remote_application->layout_mutex);
 }
 
@@ -169,11 +317,45 @@ static void recompose_screen(StopBathRemoteApplication* remote_application) {
     RemoteDisplayLayout layout;
     remote_display_layout_compose(&remote_application->display_state, &layout);
 
+    /* The code is encoded and rendered here, on this thread, for the same
+     * stack reason as the layout. The payload itself never leaves the state
+     * record; only the bitmap is published. The NFC record is derived from
+     * the same payload (specification 2.7), and presented only while the
+     * page it belongs to is showing. */
+    RemoteQrBitmap code_bitmap;
+    bool code_bitmap_valid = false;
+    RemoteNdefMessage ndef_message;
+    bool ndef_message_valid = false;
+    if(layout.qr_area_shown) {
+        RemoteQrMatrix code_matrix;
+        if(remote_qr_encode(remote_application->display_state.payload, &code_matrix)) {
+            remote_qr_render_bitmap(&code_matrix, &code_bitmap);
+            code_bitmap_valid = true;
+        }
+        if(remote_application->display_state.page == RemoteDisplayPageWifi) {
+            ndef_message_valid = remote_ndef_build_wifi_message(remote_application->display_state.payload, &ndef_message);
+        } else if(remote_application->display_state.page == RemoteDisplayPageGuest) {
+            ndef_message_valid = remote_ndef_build_uri_message(remote_application->display_state.payload, &ndef_message);
+        }
+    }
+    nfc_presentation_update(remote_application, ndef_message_valid ? &ndef_message : NULL);
+    /* The marker reflects what was just decided, so the layout is composed
+     * once more only when the flag changed; the change is a single text. */
+    bool nfc_presenting = remote_application->nfc_presentation.presenting;
+    if(remote_application->display_state.nfc_presenting != nfc_presenting) {
+        remote_application->display_state.nfc_presenting = nfc_presenting;
+        remote_display_layout_compose(&remote_application->display_state, &layout);
+    }
+
     /* An indefinite acquire on a normal mutex cannot time out; any other
      * status means the mutex itself is unusable, and a remote that cannot
      * publish its own screen has nothing sensible left to do. */
     furi_check(furi_mutex_acquire(remote_application->layout_mutex, FuriWaitForever) == FuriStatusOk);
     remote_application->composed_layout = layout;
+    remote_application->code_bitmap_valid = code_bitmap_valid;
+    if(code_bitmap_valid) {
+        remote_application->code_bitmap = code_bitmap;
+    }
     furi_mutex_release(remote_application->layout_mutex);
 }
 
@@ -242,6 +424,8 @@ int32_t stopbath_remote_main(void* launch_arguments) {
     furi_check(remote_application.input_event_queue != NULL);
     remote_application.layout_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     furi_check(remote_application.layout_mutex != NULL);
+    remote_application.nfc_presentation.nfc = nfc_alloc();
+    furi_check(remote_application.nfc_presentation.nfc != NULL);
 
     ViewPort* view_port = view_port_alloc();
     furi_check(view_port != NULL);
@@ -270,7 +454,10 @@ int32_t stopbath_remote_main(void* launch_arguments) {
         view_port_update(view_port);
     }
 
-    /* Release in the reverse order of acquisition, on the only exit path. */
+    /* Release in the reverse order of acquisition, on the only exit path.
+     * Stopping the NFC surface first clears the presented credential. */
+    nfc_presentation_stop(&remote_application.nfc_presentation);
+    nfc_free(remote_application.nfc_presentation.nfc);
     view_port_enabled_set(view_port, false);
     gui_remove_view_port(gui, view_port);
     furi_record_close(RECORD_GUI);
