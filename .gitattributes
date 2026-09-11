@@ -1,0 +1,5 @@
+# LF everywhere: the scan, the Makefile, and the C build all assume it, and
+# the repository is worked on from Windows, WSL, and Linux.
+* text=auto eol=lf
+*.fap binary
+*.png binary

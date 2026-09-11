@@ -1,0 +1,53 @@
+# Specification V2: every pull request runs the typography scan, a warnings as
+# errors build, the host tests, the sanitiser build, and the application build
+# against the pinned SDK. The protocol library tests and the short fuzz run
+# join this file in FE3, when the protocol library exists.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The one place the SDK is pinned for continuous integration. The same URL is
+# recorded in README.md for the development machine.
+env:
+  UNLEASHED_SDK_URL: https://github.com/DarkFlippers/unleashed-firmware/releases/download/unlshd-086/flipper-z-f7-sdk-unlshd-086.zip
+  UFBT_VERSION: 0.2.6
+
+jobs:
+  repository-checks:
+    name: typography scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/check_typography.py
+
+  host-tests:
+    name: host tests and sanitiser build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gcc --version
+      - run: make test
+      - run: make test-sanitise
+
+  application-build:
+    name: application build against the pinned SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install "ufbt==${UFBT_VERSION}"
+      - run: ufbt update --hw-target f7 --url "${UNLEASHED_SDK_URL}"
+      - run: ufbt
+      - run: ls -l dist/stopbath_remote.fap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stopbath_remote.fap
+          path: dist/stopbath_remote.fap
