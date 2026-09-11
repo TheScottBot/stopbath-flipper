@@ -37,8 +37,8 @@ PURE_LOGIC_SOURCES := remote_input/remote_input_model.c \
                       remote_display/remote_ndef.c \
                       protocol/remote_protocol_tables.c \
                       protocol/remote_protocol.c \
-                      peer/development_peer_core.c
-PURE_LOGIC_HEADERS := $(wildcard remote_input/*.h remote_display/*.h protocol/*.h peer/*.h lib/qrcodegen/*.h)
+                      peer/development_peer_core.c                       session/remote_session.c
+PURE_LOGIC_HEADERS := $(wildcard remote_input/*.h remote_display/*.h protocol/*.h peer/*.h session/*.h lib/qrcodegen/*.h)
 
 # The vendored encoder is a private library on the device (application.fam)
 # and is compiled once per warning set here.

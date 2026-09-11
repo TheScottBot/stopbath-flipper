@@ -67,6 +67,12 @@ typedef struct {
      * here has to be kept in step with the code set the appliance defines. */
     char error_code[REMOTE_DISPLAY_ERROR_CODE_CAPACITY];
     bool link_connected;
+    /* Local link facts, shown instead of the appliance's record when set.
+     * Both default false, so a state that only sets link_connected behaves
+     * exactly as before these were added (FE2). Incompatible wins over
+     * connecting, which wins over a plain disconnection. */
+    bool link_incompatible;
+    bool link_connecting;
     bool screen_locked;
     /* Whether the NFC surface is presenting this page's record. Local, like
      * the lock: the appliance never sends it. */

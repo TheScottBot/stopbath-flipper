@@ -16,6 +16,8 @@ testing deviation with its reason, never left unstated.
 | `tests/test_remote_ndef.c` (FE6, brought forward for the FD15 to FD17 experiment) | host, any `gcc` | `make test` |
 | `tests/test_remote_protocol.c` (FE3) | host, any `gcc` | `make test` |
 | `tests/test_development_peer.c` (FE3) | host, any `gcc` | `make test` |
+| `tests/test_remote_session.c` (FE4) | host, any `gcc` | `make test` |
+| `tests/test_link_integration.c` (FE4) | host, any `gcc` | `make test` |
 | protocol parser fuzz harness (FE3) | host, deterministic; sanitised on Linux | `make fuzz`, `make fuzz-sanitise` |
 | generated tables match `protocol.json` (FE3) | any Python 3 | `make check-protocol-tables` |
 | all of the above under address and undefined behaviour sanitisers | Linux or WSL | `make test-sanitise` |
@@ -76,6 +78,16 @@ The parser is fuzzed with a deterministic driver whose oracle re-encodes and
 re-parses every accepted message; it runs under the sanitisers in continuous
 integration.
 
+`FE4`: handshake success, version mismatch rejection, disconnect during a
+message, reconnect discards local state, button events not queued across a
+disconnection, an event not emitted while the guard is unsatisfied, and the
+sensitive payload cleared on disconnect. In `tests/test_remote_session.c`,
+written and seen to fail before the session existed. `tests/test_link_integration.c`
+wires the real session to the real development peer over a byte pipe and runs
+the connect and disconnect cycle twenty times in software, the mirror of the
+hardware gate; it asserts reconnect always yields the peer's current state and
+no press crosses a gap.
+
 Later phases add their own suites and are listed here when they do.
 
 ## Hardware gates
@@ -99,6 +111,12 @@ the area) and the gallery fixture
 arm's length. Record the handset, the app used to scan, distance, and
 lighting in `HARDWARE_COMPATIBILITY.md`.
 
+`FE4`: with the development peer running on a host and the Flipper plugged in,
+pull and reinsert the cable twenty times and restart each side independently,
+with no repair step, and confirm the display always returns to the peer's
+current state. The same check against a real appliance is `PE2` in the
+extension document and must not be claimed here.
+
 FD15 to FD17 experiment: while a code page is showing, an Android phone held
 to the back of the device (the NFC antenna is there) offers to join the
 network from the Wi-Fi page, and both an Android phone and an iPhone open the
@@ -113,6 +131,17 @@ Record handset, operating system version, and which of the three happened.
   continuous integration on Linux. Specification 0.10 asks for the sanitiser
   on the development machine; WSL on the same machine is how that is met, and
   it was run there clean on 2026-09-11.
+- The USB transport in `remote_transport.c` is not unit tested: it is the
+  SDK edge (USB CDC channel, DTR, suspend and wakeup) and needs the device.
+  It holds no logic of its own; every decision is in `remote_session`, which
+  is fully tested, and the integration test drives the same session against
+  the real peer. The transport is exercised at the FE4 hardware gate.
+- The application's foreground guard always reports foregrounded, because a
+  Flipper FAP has no background state to detect: the loader runs one
+  application, and when the desktop locks, input stops reaching the viewport
+  entirely (the FD19 finding). Recorded in `IMPLEMENTATION_DEVIATIONS.md` and
+  the evaluation log. Display-off is likewise not separately detected; the
+  lock is the operative guard for the pocket case (2.4).
 - The vendored encoder under `lib/qrcodegen/` is compiled on the host with
   the SDK's warning set rather than this project's stricter set, because
   Linux gcc 15 flags `-Wconversion` inside it and the file is not edited

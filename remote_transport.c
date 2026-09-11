@@ -1,0 +1,183 @@
+#include "remote_transport.h"
+
+#include <string.h>
+
+#include <furi.h>
+#include <furi_hal_usb.h>
+#include <furi_hal_usb_cdc.h>
+#include <cli/cli_vcp.h>
+
+/* The link runs on channel 1 (usb_cdc_dual), leaving the firmware command
+ * line on channel 0 so the host can still launch the application, read the
+ * log, and see free heap while the link runs (evaluation log 4.2). */
+#define LINK_CHANNEL 1
+
+/* CDC_DATA_SZ (64) is the USB packet size; sends and reads go a packet at a
+ * time. A larger read buffer than the packet is harmless and reduces calls. */
+#define TRANSPORT_READ_CHUNK 64
+
+struct RemoteTransport {
+    RemoteSession* session;
+    CliVcp* cli_vcp;
+    bool opened;
+    /* Whether the session currently believes the port is open, so the
+     * service loop only signals on an edge. */
+    bool port_open;
+    /*
+     * Set from the USB callbacks, which run in interrupt context and must not
+     * block or take a lock. They only record the latest fact; the main loop
+     * reads them in remote_transport_service. usb_present follows the cable
+     * (wakeup and suspend); dtr_present follows the host opening the port.
+     * volatile because they cross the interrupt to thread boundary; each is a
+     * single aligned bool, written in one place and read in another, so no
+     * further synchronisation is needed for a last writer wins reading.
+     */
+    volatile bool usb_present;
+    volatile bool dtr_present;
+};
+
+static void transport_state_callback(void* context, CdcState state) {
+    RemoteTransport* transport = context;
+    transport->usb_present = (state == CdcStateConnected);
+}
+
+static void transport_ctrl_line_callback(void* context, CdcCtrlLine ctrl_lines) {
+    RemoteTransport* transport = context;
+    /* DTR asserted means the host has the port open; dropped means it closed
+     * it. The command line treats DTR the same way (cli_vcp.c at the pinned
+     * commit). */
+    transport->dtr_present = (ctrl_lines & CdcCtrlLineDTR) != 0;
+}
+
+static void transport_rx_callback(void* context) {
+    /* Bytes are available. Reading happens in the service loop, so this only
+     * exists to satisfy the callback set; nothing to do here without taking
+     * a lock, which an interrupt must not. */
+    UNUSED(context);
+}
+
+static void transport_tx_complete_callback(void* context) {
+    UNUSED(context);
+}
+
+static void transport_config_callback(void* context, struct usb_cdc_line_coding* config) {
+    /* The line coding (baud and framing) is meaningless for a USB CDC
+     * channel and is accepted and ignored. */
+    UNUSED(context);
+    UNUSED(config);
+}
+
+RemoteTransport* remote_transport_alloc(RemoteSession* session) {
+    RemoteTransport* transport = malloc(sizeof(RemoteTransport));
+    transport->session = session;
+    transport->cli_vcp = NULL;
+    transport->opened = false;
+    transport->port_open = false;
+    transport->usb_present = false;
+    transport->dtr_present = false;
+    return transport;
+}
+
+void remote_transport_free(RemoteTransport* transport) {
+    free(transport);
+}
+
+bool remote_transport_open(RemoteTransport* transport) {
+    if(transport->opened) {
+        return true;
+    }
+    transport->cli_vcp = furi_record_open(RECORD_CLI_VCP);
+
+    /* Unlock any prior mode hold, then switch to dual CDC. set_config returns
+     * false when the USB mode is locked, which happens during an RPC session
+     * or when the desktop PIN lock is set (evaluation log 4.2). The link
+     * cannot open then; the caller shows not connected and may retry. */
+    furi_hal_usb_unlock();
+    if(!furi_hal_usb_set_config(&usb_cdc_dual, NULL)) {
+        furi_record_close(RECORD_CLI_VCP);
+        transport->cli_vcp = NULL;
+        return false;
+    }
+    /* Keep the command line alive on channel 0. */
+    cli_vcp_enable(transport->cli_vcp);
+
+    static const CdcCallbacks callbacks = {
+        transport_tx_complete_callback,
+        transport_rx_callback,
+        transport_state_callback,
+        transport_ctrl_line_callback,
+        transport_config_callback,
+    };
+    furi_hal_cdc_set_callbacks(LINK_CHANNEL, (CdcCallbacks*)&callbacks, transport);
+
+    /* Seed the observed facts from the current line state, so a port already
+     * open when the application starts is noticed on the first service. */
+    transport->usb_present = true;
+    transport->dtr_present = (furi_hal_cdc_get_ctrl_line_state(LINK_CHANNEL) & CdcCtrlLineDTR) != 0;
+    transport->opened = true;
+    return true;
+}
+
+void remote_transport_close(RemoteTransport* transport) {
+    if(!transport->opened) {
+        return;
+    }
+    /* If the link thought the port was open, tell the session it is closing,
+     * so the sensitive payload is cleared even on an application exit. */
+    if(transport->port_open) {
+        remote_session_port_closed(transport->session);
+        transport->port_open = false;
+    }
+    furi_hal_cdc_set_callbacks(LINK_CHANNEL, NULL, NULL);
+    furi_hal_usb_unlock();
+    furi_hal_usb_set_config(&usb_cdc_single, NULL);
+    cli_vcp_enable(transport->cli_vcp);
+    furi_record_close(RECORD_CLI_VCP);
+    transport->cli_vcp = NULL;
+    transport->opened = false;
+}
+
+void remote_transport_service(RemoteTransport* transport) {
+    if(!transport->opened) {
+        return;
+    }
+
+    /* The port is usable only when the cable is in and the host has opened
+     * it. Signal the session on the edge. */
+    bool port_open_now = transport->usb_present && transport->dtr_present;
+    if(port_open_now != transport->port_open) {
+        transport->port_open = port_open_now;
+        if(port_open_now) {
+            remote_session_port_opened(transport->session);
+        } else {
+            remote_session_port_closed(transport->session);
+        }
+    }
+
+    /* Read whatever arrived and feed the session. furi_hal_cdc_receive is non
+     * blocking and returns the count. */
+    uint8_t read_buffer[TRANSPORT_READ_CHUNK];
+    int32_t received = furi_hal_cdc_receive(LINK_CHANNEL, read_buffer, sizeof(read_buffer));
+    while(received > 0) {
+        if(transport->port_open) {
+            remote_session_receive(transport->session, read_buffer, (size_t)received);
+        }
+        /* Drain the channel even if the port is not open, so stale bytes do
+         * not accumulate; they are simply not delivered to the session. */
+        received = furi_hal_cdc_receive(LINK_CHANNEL, read_buffer, sizeof(read_buffer));
+    }
+
+    /* Send whatever the session has queued, a packet at a time. */
+    if(transport->port_open) {
+        uint8_t send_buffer[TRANSPORT_READ_CHUNK];
+        size_t to_send = remote_session_take_output(transport->session, send_buffer, sizeof(send_buffer));
+        while(to_send > 0) {
+            furi_hal_cdc_send(LINK_CHANNEL, send_buffer, (uint16_t)to_send);
+            to_send = remote_session_take_output(transport->session, send_buffer, sizeof(send_buffer));
+        }
+    }
+}
+
+bool remote_transport_port_is_open(const RemoteTransport* transport) {
+    return transport->port_open;
+}

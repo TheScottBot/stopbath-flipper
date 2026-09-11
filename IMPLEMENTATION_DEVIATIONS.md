@@ -60,6 +60,37 @@ states the contract, what was done instead, why, and the test that holds it.
   completion ("everything is verified").
 - Covering tests: `tests/test_remote_qr.c` and `tests/test_remote_ndef.c`.
 
+## The foreground guard always reports foregrounded on this hardware
+
+- The contract: specification 2.4, which requires that no button event be
+  transmitted while the application is backgrounded, the display is off, or
+  another application is running, and 2.2, which has the event carry a
+  foregrounded flag the appliance enforces.
+- What was done instead: the application always reports `foregrounded=1`, and
+  does not separately detect a display-off state.
+- Why: a Flipper FAP has no background state to detect. The loader runs
+  exactly one application at a time, so "another application is running"
+  cannot occur; and when the desktop locks, the GUI enters lockdown and
+  routes input to the desktop layer only, so this application's viewport
+  stops receiving input entirely (the FD19 finding, evaluation log Lock
+  section). Any input the application receives is therefore received while
+  foregrounded, and the flag is honestly true. Display-off is not separately
+  detected because the operative guard for the pocket case is the screen
+  lock (2.4: "A long press plus the lock is the design"), and the workflow is
+  to lock before pocketing; a press while the backlight has merely timed out,
+  with the screen unlocked, is the photographer still using the device.
+- What this does not weaken: the appliance still enforces the guard on the
+  flags it receives (2.2), so a different or faulty peripheral sending
+  `foregrounded=0` is rejected. The lock half of the guard is enforced in
+  full, in `remote_input_model` and again in `remote_session`.
+- Revisit when: a future firmware gives a FAP a real background or focus
+  state, at which point `application_is_foregrounded` in `stopbath_remote.c`
+  is the one place to change.
+- Author decision requested: whether this stands. Recorded 2026-09-11.
+- Covering tests: the guard itself is covered in `tests/test_remote_session.c`
+  (`a_button_is_transmitted_only_while_connected_and_foregrounded`); the
+  foreground determination is not testable off the device.
+
 ## The hyphen run rule is not applied to vendored third party sources
 
 - The contract: specification 0.8, which requires the em dash scan and adds

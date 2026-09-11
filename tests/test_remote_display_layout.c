@@ -87,6 +87,34 @@ static void every_fixture_composes_within_bounds_with_a_header(RemoteTestReport*
     }
 }
 
+static void connecting_shows_a_distinct_screen(RemoteTestReport* report) {
+    RemoteDisplayState display_state = *fixture_named("presenting wifi");
+    display_state.link_connected = false;
+    display_state.link_connecting = true;
+    RemoteDisplayLayout layout;
+    remote_display_layout_compose(&display_state, &layout);
+    assert_text_placed(report, &layout, header_text);
+    assert_text_placed(report, &layout, (ExpectedText){"Connecting", 64, 34, RemoteLayoutFontPrimary, RemoteLayoutAnchorCenter, false});
+    assert_text_placed(report, &layout, (ExpectedText){"Please wait", 64, 50, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, false});
+    REMOTE_TEST_ASSERT(report, !layout.qr_area_shown, "no code while connecting: not confirmed yet");
+    assert_text_absent(report, &layout, "Pi disconnected");
+}
+
+static void an_incompatible_link_shows_a_distinct_screen(RemoteTestReport* report) {
+    RemoteDisplayState display_state = *fixture_named("presenting wifi");
+    display_state.link_connected = false;
+    /* Incompatible wins even if connecting is also set. */
+    display_state.link_connecting = true;
+    display_state.link_incompatible = true;
+    RemoteDisplayLayout layout;
+    remote_display_layout_compose(&display_state, &layout);
+    assert_text_placed(report, &layout, (ExpectedText){"Incompatible", 64, 34, RemoteLayoutFontPrimary, RemoteLayoutAnchorCenter, false});
+    assert_text_placed(report, &layout, (ExpectedText){"Update remote", 64, 50, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, false});
+    REMOTE_TEST_ASSERT(report, !layout.qr_area_shown, "no code when incompatible");
+    assert_text_absent(report, &layout, "Connecting");
+    assert_text_absent(report, &layout, "Pi disconnected");
+}
+
 static void not_connected_overrides_whatever_the_record_says(RemoteTestReport* report) {
     RemoteDisplayLayout layout = compose_named(report, "not connected");
     assert_text_placed(report, &layout, header_text);
@@ -343,6 +371,8 @@ static void initialise_gives_a_disconnected_unlocked_empty_state(RemoteTestRepor
     memset(&display_state, 0x5A, sizeof(display_state));
     remote_display_state_initialise(&display_state);
     REMOTE_TEST_ASSERT(report, !display_state.link_connected, "not connected");
+    REMOTE_TEST_ASSERT(report, !display_state.link_incompatible, "not incompatible");
+    REMOTE_TEST_ASSERT(report, !display_state.link_connecting, "not connecting");
     REMOTE_TEST_ASSERT(report, !display_state.screen_locked, "unlocked");
     REMOTE_TEST_ASSERT(report, !display_state.nfc_presenting, "not presenting");
     REMOTE_TEST_ASSERT_EQUAL_INT(report, RemoteDisplayStatusReady, display_state.status, "ready");
@@ -355,6 +385,8 @@ static void initialise_gives_a_disconnected_unlocked_empty_state(RemoteTestRepor
 int main(void) {
     static const RemoteTestCase test_cases[] = {
         {"every fixture composes within bounds with a header", every_fixture_composes_within_bounds_with_a_header},
+        {"connecting shows a distinct screen", connecting_shows_a_distinct_screen},
+        {"an incompatible link shows a distinct screen", an_incompatible_link_shows_a_distinct_screen},
         {"not connected overrides whatever the record says", not_connected_overrides_whatever_the_record_says},
         {"ready shows the word and the new session hint", ready_shows_the_word_and_the_new_session_hint},
         {"presenting wifi places the code and the column", presenting_wifi_places_the_code_and_the_column},

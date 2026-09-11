@@ -16,7 +16,20 @@ App(
     # The source glob is recursive (recorded in the evaluation log 4.1), so
     # the host tests and the per-project SDK checkout must be excluded by
     # name or they would be compiled into the application.
-    sources=["*.c", "!tests", "!peer", "!fuzz", "!.ufbt", "!build", "!dist"],
+    # The display fixtures and the credentials header they include are test
+    # and experiment data, not part of the application; excluded so no test
+    # credential is embedded in the shipped binary (prohibition 12). session
+    # and remote_transport are device code and are kept.
+    sources=[
+        "*.c",
+        "!tests",
+        "!peer",
+        "!fuzz",
+        "!.ufbt",
+        "!build",
+        "!dist",
+        "!remote_display/remote_display_fixtures.c",
+    ],
     # The QR encoder, vendored verbatim under lib/ (the folder the build
     # system reserves for private libraries). Provenance and the dependency
     # record are in docs/evaluation/ACTUAL_CONTRACT_EVALUATION.md.

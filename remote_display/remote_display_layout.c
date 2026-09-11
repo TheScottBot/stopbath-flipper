@@ -182,9 +182,19 @@ void remote_display_layout_compose(const RemoteDisplayState* display_state, Remo
     }
 
     /* Stale content is worse than none: the device cannot know whether what
-     * it holds is still true once the link is down (specification 2.5). */
+     * it holds is still true once the link is down (specification 2.5). The
+     * local link facts are shown in place of any record, most specific first. */
+    if(display_state->link_incompatible) {
+        /* A version the appliance will not talk to (2.11: faults visible). */
+        compose_two_centred_lines(layout, "Incompatible", "Update remote");
+        return;
+    }
     if(!display_state->link_connected) {
-        compose_two_centred_lines(layout, "Pi disconnected", "Reconnect USB");
+        if(display_state->link_connecting) {
+            compose_two_centred_lines(layout, "Connecting", "Please wait");
+        } else {
+            compose_two_centred_lines(layout, "Pi disconnected", "Reconnect USB");
+        }
         return;
     }
 

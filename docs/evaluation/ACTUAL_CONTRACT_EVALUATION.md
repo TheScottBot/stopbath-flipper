@@ -34,6 +34,7 @@ uncertainties, and which author decisions are still open.
 | FE2 | Display | DONE 2026-09-11. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Gate cleared by the author the same day, indoors. |
 | Experiments | `FD4`, `FD15` to `FD17` | DONE 2026-09-11, brought forward from FE5 and FE6 at the author's direction so the two guest facing surfaces were proven on hardware before any protocol or appliance work. Both surfaces work. Recorded as a build order deviation in `IMPLEMENTATION_DEVIATIONS.md`. |
 | FE3 | Protocol, peer, fuzz | DONE 2026-09-11 on the automated side. Provisional protocol drafted in `PROTOCOL.md` and `protocol.json`; parser and encoder generated from one table; parser fuzzed clean; development peer with misbehaviour modes and a serial shell. Decisions `FD7`, `FD8`, `FD9` and the framing settled by the author for the provisional period; frozen at `FD20`. No hardware gate: FE3 touches no device. |
+| FE4 | Transport, session | DONE 2026-09-11 on the automated side. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. Hardware gate (twenty cable pulls) outstanding, the author's. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -203,6 +204,16 @@ wanting a longer deliberate hold (the main specification's `D20` guidance is abo
 one second for the dashboard) must implement it from `InputTypePress`,
 `InputTypeRelease` and its own timer. Which duration the Flipper uses is an
 Appendix A value settled in 4.4 and field use, not here.
+
+FE4 addition, 2026-09-11: the foreground half of the guard (2.4) has no
+firmware signal on a FAP, because the loader runs one application and desktop
+lockdown removes input from a backgrounded viewport (the Lock section). The
+application reports foregrounded true and relies on the lock as the operative
+guard, recorded as a deviation in `IMPLEMENTATION_DEVIATIONS.md`. The transport
+uses the DTR control line for the host opening the port and USB suspend and
+wakeup for the cable, both from `furi_hal_usb_cdc.h`; the USB configuration
+(dual CDC) persists across suspend, so a cable pull needs no re-open, which is
+what makes reconnection require no repair step.
 
 ### Conclusions accepted
 

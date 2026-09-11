@@ -12,12 +12,13 @@ and the meaning of every button. The specification is
 
 ## Status
 
-Phases `FE1` to `FE3` are done. The application renders every display state,
-draws a real QR code and presents the same payload over NFC, all confirmed
-with a phone. The protocol is drafted (`PROTOCOL.md`, `protocol.json`) with a
-freestanding parser and encoder, a fuzz harness, and a development peer that
-stands in for the appliance. It is provisional until the freeze (`FD20`).
-Transport wiring to a real Flipper is `FE4`, next.
+Phases `FE1` to `FE4` are done on the automated side. The application talks to
+the appliance (or the development peer) over the USB link: it handshakes,
+renders the display state it is sent, draws the page's QR and presents it over
+NFC, reports button events under the guard, and reconnects without a repair
+step. The protocol (`PROTOCOL.md`, `protocol.json`) is provisional until the
+freeze (`FD20`). The FE4 hardware gate, twenty cable pulls against the peer, is
+the author's on the device.
 
 Hardware gates cleared by the author are recorded in
 `HARDWARE_COMPATIBILITY.md`. Nothing in this repository claims a hardware gate
@@ -102,6 +103,8 @@ make check-typography PYTHON="py -3"
 | `remote_input/` | pure logic: what a press does to the device, no SDK |
 | `remote_display/` | pure logic: what goes where on the screen, the shared display fixtures, the generated font metrics, the QR wrapper, and the NDEF builder, no SDK |
 | `protocol/` | the parser and encoder, and the tables generated from `protocol.json` |
+| `session/` | the client session: handshake, reconnection, the guard, no SDK |
+| `remote_transport.c` | the USB CDC transport, the one SDK edge of the link |
 | `peer/` | the development peer: a host stand-in for the appliance, core and shell |
 | `fuzz/` | the protocol parser fuzz harness |
 | `lib/qrcodegen/` | the vendored QR encoder, unmodified, with its licence and provenance |
