@@ -53,7 +53,16 @@ struct RemoteTransport {
 
 static void transport_state_callback(void* context, CdcState state) {
     RemoteTransport* transport = context;
-    transport->usb_present = (state == CdcStateConnected);
+    bool connected = (state == CdcStateConnected);
+    transport->usb_present = connected;
+    if(!connected) {
+        /* On a physical cable pull the host cannot send a DTR drop, so DTR
+         * would otherwise stay stale true and, on reinsert, be read as a port
+         * still open, starting a handshake with nobody there. Clearing it here
+         * means a reconnection waits for the host to open the port again, which
+         * the ctrl line callback then reports. */
+        transport->dtr_present = false;
+    }
 }
 
 static void transport_ctrl_line_callback(void* context, CdcCtrlLine ctrl_lines) {

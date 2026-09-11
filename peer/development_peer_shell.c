@@ -141,8 +141,10 @@ static int open_serial_device(const char* path) {
     return descriptor;
 }
 
-/* Drains the peer's output to the device, and reads whatever the device has
- * sent into the peer. Non blocking; returns false on a fatal error. */
+/* Drains the peer's output to the device and reads whatever the device has
+ * sent into the peer. Non blocking. Returns false when the device has gone
+ * away (a cable pull: write or read fails with ENXIO, EIO and the like), so
+ * the caller can reopen it. */
 static bool pump(DevelopmentPeerCore* peer, int device) {
     uint8_t buffer[DEVELOPMENT_PEER_OUTPUT_CAPACITY];
     size_t to_send = development_peer_take_output(peer, buffer, sizeof(buffer));
@@ -151,7 +153,6 @@ static bool pump(DevelopmentPeerCore* peer, int device) {
         ssize_t written = write(device, buffer + sent, to_send - sent);
         if(written < 0) {
             if(errno == EAGAIN) continue;
-            fprintf(stderr, "write failed: %s\n", strerror(errno));
             return false;
         }
         sent += (size_t)written;
@@ -160,10 +161,27 @@ static bool pump(DevelopmentPeerCore* peer, int device) {
     if(received > 0) {
         development_peer_feed(peer, buffer, (size_t)received);
     } else if(received < 0 && errno != EAGAIN) {
-        fprintf(stderr, "read failed: %s\n", strerror(errno));
         return false;
     }
     return true;
+}
+
+/* Reopens the device after it has disappeared, retrying until it returns, so
+ * the peer survives a cable pull without being restarted. The peer's link
+ * state is discarded, exactly as the appliance would on a detach, so the
+ * reconnection handshakes afresh. Returns the new descriptor. */
+static int reopen_device(DevelopmentPeerCore* peer, const char* path, int old_device) {
+    if(old_device >= 0) close(old_device);
+    development_peer_link_dropped(peer);
+    fprintf(stderr, "device gone; waiting for it to return...\n");
+    for(;;) {
+        int device = open_serial_device(path);
+        if(device >= 0) {
+            fprintf(stderr, "device back on %s\n", path);
+            return device;
+        }
+        usleep(200000);
+    }
 }
 
 int main(int argument_count, char** arguments) {
@@ -200,7 +218,9 @@ int main(int argument_count, char** arguments) {
             fwrite(buffer, 1, length, stdout);
             fflush(stdout);
         } else {
-            if(!pump(&peer, device)) break;
+            if(!pump(&peer, device)) {
+                device = reopen_device(&peer, arguments[1], device);
+            }
             ssize_t read_count = read(STDIN_FILENO, command_line, sizeof(command_line) - 1);
             if(read_count > 0) {
                 command_line[read_count] = '\0';
