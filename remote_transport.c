@@ -16,6 +16,14 @@
  * time. A larger read buffer than the packet is harmless and reduces calls. */
 #define TRANSPORT_READ_CHUNK 64
 
+/* How long to wait for a USB transmit to finish before giving up for this
+ * pass. furi_hal_cdc_send is asynchronous: it hands the buffer to the USB
+ * endpoint and returns, and the buffer must stay valid and unmodified until
+ * the tx complete callback fires (usb_uart_bridge.c waits the same way). A
+ * host that is not draining the channel makes this time out; the bytes stay
+ * queued in the session and are tried again next pass. */
+#define TRANSPORT_TX_TIMEOUT_MILLISECONDS 20
+
 struct RemoteTransport {
     RemoteSession* session;
     CliVcp* cli_vcp;
@@ -34,6 +42,13 @@ struct RemoteTransport {
      */
     volatile bool usb_present;
     volatile bool dtr_present;
+    /* Released by the tx complete callback when a transmit finishes, so the
+     * send buffer is never reused while the USB hardware is still reading it.
+     * Starts available. */
+    FuriSemaphore* tx_complete;
+    /* The transmit buffer, held on the transport rather than the stack so it
+     * outlives a single service call while a transmit is in flight. */
+    uint8_t send_buffer[TRANSPORT_READ_CHUNK];
 };
 
 static void transport_state_callback(void* context, CdcState state) {
@@ -57,7 +72,9 @@ static void transport_rx_callback(void* context) {
 }
 
 static void transport_tx_complete_callback(void* context) {
-    UNUSED(context);
+    RemoteTransport* transport = context;
+    /* Runs in USB interrupt context: only release the semaphore, no work. */
+    furi_semaphore_release(transport->tx_complete);
 }
 
 static void transport_config_callback(void* context, struct usb_cdc_line_coding* config) {
@@ -75,10 +92,12 @@ RemoteTransport* remote_transport_alloc(RemoteSession* session) {
     transport->port_open = false;
     transport->usb_present = false;
     transport->dtr_present = false;
+    transport->tx_complete = furi_semaphore_alloc(1, 1);
     return transport;
 }
 
 void remote_transport_free(RemoteTransport* transport) {
+    furi_semaphore_free(transport->tx_complete);
     free(transport);
 }
 
@@ -167,14 +186,25 @@ void remote_transport_service(RemoteTransport* transport) {
         received = furi_hal_cdc_receive(LINK_CHANNEL, read_buffer, sizeof(read_buffer));
     }
 
-    /* Send whatever the session has queued, a packet at a time. */
-    if(transport->port_open) {
-        uint8_t send_buffer[TRANSPORT_READ_CHUNK];
-        size_t to_send = remote_session_take_output(transport->session, send_buffer, sizeof(send_buffer));
-        while(to_send > 0) {
-            furi_hal_cdc_send(LINK_CHANNEL, send_buffer, (uint16_t)to_send);
-            to_send = remote_session_take_output(transport->session, send_buffer, sizeof(send_buffer));
+    /* Send whatever the session has queued, a packet at a time. The send slot
+     * is taken before any bytes are removed from the session, so a transmit
+     * that cannot start (the previous one still in flight, or the host not
+     * draining) leaves the bytes queued rather than losing them. The buffer
+     * is not overwritten until the previous transmit has completed. */
+    while(transport->port_open) {
+        if(furi_semaphore_acquire(transport->tx_complete, TRANSPORT_TX_TIMEOUT_MILLISECONDS) != FuriStatusOk) {
+            break;
         }
+        size_t to_send =
+            remote_session_take_output(transport->session, transport->send_buffer, sizeof(transport->send_buffer));
+        if(to_send == 0) {
+            /* Nothing to send: give the slot back and stop. */
+            furi_semaphore_release(transport->tx_complete);
+            break;
+        }
+        furi_hal_cdc_send(LINK_CHANNEL, transport->send_buffer, (uint16_t)to_send);
+        /* The slot is released by transport_tx_complete_callback when the USB
+         * hardware has finished reading send_buffer. */
     }
 }
 

@@ -41,6 +41,12 @@
  * the link is up. */
 #define MAIN_LOOP_SERVICE_INTERVAL_MILLISECONDS 50
 
+/* How often to retry opening the link if it did not open at startup. The USB
+ * mode is locked while an RPC session is active, which happens for a moment
+ * when the host installs and launches the application (ufbt launch), so the
+ * first open can fail; retrying opens the link as soon as the lock clears. */
+#define LINK_OPEN_RETRY_INTERVAL_MILLISECONDS 1000
+
 /*
  * The identity the NFC surface presents, unchanged from the FD15 to FD17
  * experiment: a seven byte UID, the ATQA the firmware's unit test uses for
@@ -364,16 +370,22 @@ int32_t stopbath_remote_main(void* launch_arguments) {
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
 
     /* Open the link. If the USB mode is locked (an RPC session or a desktop
-     * PIN), the link cannot open; the application still runs and shows not
-     * connected, and the failure is logged rather than crashing. */
-    if(!remote_transport_open(remote_application.transport)) {
-        FURI_LOG_W("StopBathRemote", "USB mode locked; link not opened");
+     * PIN), the link cannot open now; the application still runs and shows not
+     * connected, and the loop retries until the lock clears. */
+    bool link_opened = remote_transport_open(remote_application.transport);
+    if(!link_opened) {
+        FURI_LOG_W("StopBathRemote", "USB mode locked; will retry opening the link");
     }
+    uint32_t next_open_attempt_tick = furi_get_tick() + furi_ms_to_ticks(LINK_OPEN_RETRY_INTERVAL_MILLISECONDS);
 
     recompose_screen(&remote_application);
 
     bool exit_requested = false;
     while(!exit_requested) {
+        if(!link_opened && furi_get_tick() >= next_open_attempt_tick) {
+            link_opened = remote_transport_open(remote_application.transport);
+            next_open_attempt_tick = furi_get_tick() + furi_ms_to_ticks(LINK_OPEN_RETRY_INTERVAL_MILLISECONDS);
+        }
         remote_transport_service(remote_application.transport);
 
         InputEvent input_event;
