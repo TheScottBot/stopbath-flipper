@@ -166,43 +166,113 @@ static bool pump(DevelopmentPeerCore* peer, int device) {
     return true;
 }
 
-/* Reopens the device after it has disappeared, retrying until it returns, so
- * the peer survives a cable pull without being restarted. The peer's link
- * state is discarded, exactly as the appliance would on a detach, so the
- * reconnection handshakes afresh. Returns the new descriptor. */
-static int reopen_device(DevelopmentPeerCore* peer, const char* path, int old_device) {
+/* Whether a buffer contains the start of a HELLO line, which only the
+ * peripheral's application channel sends. The command line channel answers a
+ * DTR assert with its own banner, which never contains this. */
+static bool looks_like_hello(const uint8_t* buffer, size_t length) {
+    static const char needle[] = "HELLO version=";
+    size_t needle_length = sizeof(needle) - 1;
+    if(length < needle_length) return false;
+    for(size_t start = 0; start + needle_length <= length; start++) {
+        if(memcmp(buffer + start, needle, needle_length) == 0) return true;
+    }
+    return false;
+}
+
+/* Probes one serial node: opens it (which asserts DTR and makes the
+ * application send its HELLO), reads briefly, and reports whether a HELLO
+ * arrived. Closes the node either way. */
+static bool node_is_the_application(const char* path) {
+    int device = open_serial_device(path);
+    if(device < 0) return false;
+    bool is_application = false;
+    uint8_t buffer[512];
+    for(int attempt = 0; attempt < 10 && !is_application; attempt++) {
+        usleep(100000);
+        ssize_t received = read(device, buffer, sizeof(buffer));
+        if(received > 0 && looks_like_hello(buffer, (size_t)received)) {
+            is_application = true;
+        }
+    }
+    close(device);
+    return is_application;
+}
+
+/*
+ * Finds the peripheral's application channel and opens it. The serial node
+ * number is not stable across a reattachment on this platform (the evaluation
+ * log records it, and the real appliance uses a udev rule matching the device
+ * by serial and interface). A development tool cannot assume a fixed node, so
+ * it probes each ttyACM node for the HELLO only the application sends, and
+ * opens the one that answers. A preferred path is tried first. Blocks until
+ * the application is found, so the peer survives a cable pull without being
+ * restarted. The freshly opened node asserts DTR again, so the application
+ * sends a HELLO the caller then handshakes on.
+ */
+#define MAX_SERIAL_NODE 16
+
+static int find_application_channel(const char* preferred, char* found_path, size_t found_capacity) {
+    for(;;) {
+        if(preferred != NULL && node_is_the_application(preferred)) {
+            snprintf(found_path, found_capacity, "%s", preferred);
+            return open_serial_device(preferred);
+        }
+        for(int node_index = 0; node_index < MAX_SERIAL_NODE; node_index++) {
+            char path[32];
+            snprintf(path, sizeof(path), "/dev/ttyACM%d", node_index);
+            if(node_is_the_application(path)) {
+                snprintf(found_path, found_capacity, "%s", path);
+                return open_serial_device(path);
+            }
+        }
+        usleep(300000);
+    }
+}
+
+/* Reopens the application channel after the device has disappeared. The peer's
+ * link state is discarded, exactly as the appliance would on a detach, so the
+ * reconnection handshakes afresh. Returns the new descriptor and updates the
+ * path, since the node number may have changed. */
+static int reopen_device(DevelopmentPeerCore* peer, char* path, size_t path_capacity, int old_device) {
     if(old_device >= 0) close(old_device);
     development_peer_link_dropped(peer);
-    fprintf(stderr, "device gone; waiting for it to return...\n");
-    for(;;) {
-        int device = open_serial_device(path);
-        if(device >= 0) {
-            fprintf(stderr, "device back on %s\n", path);
-            return device;
-        }
-        usleep(200000);
-    }
+    fprintf(stderr, "device gone; searching for the peripheral...\n");
+    int device = find_application_channel(path, path, path_capacity);
+    fprintf(stderr, "peripheral back on %s\n", path);
+    return device;
 }
 
 int main(int argument_count, char** arguments) {
     if(argument_count != 2) {
-        fprintf(stderr, "usage: %s <serial-device>|-\n", arguments[0]);
+        fprintf(stderr, "usage: %s <serial-device>|auto|-\n", arguments[0]);
+        fprintf(stderr, "  a device path drives that node; auto finds the peripheral by probing;\n");
+        fprintf(stderr, "  - reads operator commands from stdin for a scripted session.\n");
         return 2;
     }
     static DevelopmentPeerCore peer;
     development_peer_initialise(&peer);
 
     bool use_stdio = strcmp(arguments[1], "-") == 0;
+    /* The node number is not stable across a reattachment, so the current
+     * path is held in a mutable buffer and updated on every reconnection. */
+    char device_path[32];
+    snprintf(device_path, sizeof(device_path), "%s", arguments[1]);
     int device = -1;
     if(!use_stdio) {
-        device = open_serial_device(arguments[1]);
+        bool find_by_probe = strcmp(arguments[1], "auto") == 0;
+        if(find_by_probe) {
+            fprintf(stderr, "searching for the peripheral...\n");
+            device = find_application_channel(NULL, device_path, sizeof(device_path));
+        } else {
+            device = open_serial_device(arguments[1]);
+        }
         if(device < 0) return 1;
         if(fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) < 0) {
             fprintf(stderr, "cannot make stdin non blocking: %s\n", strerror(errno));
             close(device);
             return 1;
         }
-        fprintf(stderr, "peer on %s. Type commands; 'quit' to exit.\n", arguments[1]);
+        fprintf(stderr, "peer on %s. Type commands; 'quit' to exit.\n", device_path);
     }
 
     char command_line[512];
@@ -219,7 +289,7 @@ int main(int argument_count, char** arguments) {
             fflush(stdout);
         } else {
             if(!pump(&peer, device)) {
-                device = reopen_device(&peer, arguments[1], device);
+                device = reopen_device(&peer, device_path, sizeof(device_path), device);
             }
             ssize_t read_count = read(STDIN_FILENO, command_line, sizeof(command_line) - 1);
             if(read_count > 0) {

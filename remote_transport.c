@@ -179,6 +179,13 @@ void remote_transport_service(RemoteTransport* transport) {
             remote_session_port_opened(transport->session);
         } else {
             remote_session_port_closed(transport->session);
+            /* A transmit may have been in flight when the cable was pulled,
+             * in which case the tx complete interrupt never fires and the
+             * send slot would stay taken forever, wedging every future send.
+             * Normalise the semaphore to available, so the next connection
+             * can transmit. Runs in thread context, which is safe. */
+            furi_semaphore_acquire(transport->tx_complete, 0);
+            furi_semaphore_release(transport->tx_complete);
         }
     }
 
