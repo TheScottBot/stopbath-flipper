@@ -118,4 +118,4 @@ specification requires. Each says what it is for at the top.
 
 ## Licence
 
-MIT, matching the StopBath project. See `LICENSE`.
+MIT. See `LICENSE`.
