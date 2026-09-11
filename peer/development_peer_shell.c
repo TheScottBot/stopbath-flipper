@@ -27,6 +27,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,6 +155,20 @@ static int open_serial_device(const char* path) {
  * away (a cable pull: write or read fails with ENXIO, EIO and the like), so
  * the caller can reopen it. */
 static bool pump(DevelopmentPeerCore* peer, int device) {
+    /*
+     * A USB CDC unplug makes read() return 0, which in this polling terminal
+     * mode (VMIN=0, VTIME=0) is exactly what an open but quiet link returns, so
+     * a read alone cannot tell a gone device from a silent one, and the peer
+     * would sit on a dead node forever (observed on hardware: two plug cycles,
+     * never a "device gone"). poll reports the hangup distinctly: on a detach
+     * the kernel raises POLLHUP (usually with POLLERR) on the tty, while a
+     * merely quiet link leaves POLLIN clear and none of these set. Check it
+     * first so a detach is noticed even when there is nothing to send or read.
+     */
+    struct pollfd poll_target = {.fd = device, .events = POLLIN};
+    if(poll(&poll_target, 1, 0) > 0 && (poll_target.revents & (POLLHUP | POLLERR | POLLNVAL))) {
+        return false;
+    }
     uint8_t buffer[DEVELOPMENT_PEER_OUTPUT_CAPACITY];
     size_t to_send = development_peer_take_output(peer, buffer, sizeof(buffer));
     size_t sent = 0;
