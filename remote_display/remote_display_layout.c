@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "remote_font_metrics.h"
+#include "remote_qr.h"
 
 /* FD3 positions not already named in the header. */
 #define CENTRED_X                 (REMOTE_DISPLAY_WIDTH / 2)
@@ -120,11 +121,46 @@ static const char* status_line_for(RemoteDisplayStatus status) {
     return status == RemoteDisplayStatusGuestConnected ? "Guest joined" : "Presenting";
 }
 
+/* The code area center and the two baselines the unavailable message sits on,
+ * inside the 58 pixel code area. */
+#define CODE_AREA_CENTER_X            (REMOTE_LAYOUT_QR_X + REMOTE_LAYOUT_QR_SIZE / 2)
+#define CODE_ERROR_PRIMARY_BASELINE   30
+#define CODE_ERROR_SECONDARY_BASELINE 44
+
+/* A code page whose payload the encoder refuses: the version 3 ceiling cannot
+ * hold it (FE5). Rather than the empty frame the glue would otherwise draw,
+ * which reads as a broken code, the code area carries a distinct, legible
+ * message and no QR is attempted. When the NFC surface is presenting the same
+ * record (which has no such small ceiling), the message sends the guest to the
+ * tap instead of reading as a dead end; otherwise it states the fault. An empty
+ * payload is not this case: it frames the area as a placeholder, since nothing
+ * was sent to be too big. */
+static void compose_code_unavailable(RemoteDisplayLayout* layout, bool nfc_presenting) {
+    add_shape(layout, RemoteLayoutShapeFrame, REMOTE_LAYOUT_QR_X, REMOTE_LAYOUT_QR_Y, REMOTE_LAYOUT_QR_SIZE, REMOTE_LAYOUT_QR_SIZE);
+    const char* primary = nfc_presenting ? "Too big" : "Code";
+    const char* secondary = nfc_presenting ? "tap to join" : "too big";
+    add_text(layout, CODE_AREA_CENTER_X, CODE_ERROR_PRIMARY_BASELINE, RemoteLayoutFontPrimary, RemoteLayoutAnchorCenter, false, REMOTE_LAYOUT_QR_SIZE - 4, primary);
+    add_text(layout, CODE_AREA_CENTER_X, CODE_ERROR_SECONDARY_BASELINE, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, false, REMOTE_LAYOUT_QR_SIZE - 4, secondary);
+}
+
 static void compose_code_page(RemoteDisplayLayout* layout, const RemoteDisplayState* display_state, RemoteDisplayStatus status, RemoteDisplayPage page, bool error_band_shown) {
-    layout->qr_area_shown = true;
-    layout->qr_x = REMOTE_LAYOUT_QR_X;
-    layout->qr_y = REMOTE_LAYOUT_QR_Y;
-    layout->qr_size = REMOTE_LAYOUT_QR_SIZE;
+    /* This is an active code page whatever the payload turns out to be, so the
+     * glue presents NFC on it even when the QR cannot be drawn. */
+    layout->code_page_active = true;
+
+    /* A non-empty payload the encoder cannot hold shows a distinct error in the
+     * code area instead of a frame that would look like a code failing to
+     * scan; an empty or encodable payload keeps the frame the glue fills. */
+    bool payload_present = display_state->payload[0] != '\0';
+    bool code_fits = !payload_present || remote_qr_can_encode(display_state->payload);
+    if(code_fits) {
+        layout->qr_area_shown = true;
+        layout->qr_x = REMOTE_LAYOUT_QR_X;
+        layout->qr_y = REMOTE_LAYOUT_QR_Y;
+        layout->qr_size = REMOTE_LAYOUT_QR_SIZE;
+    } else {
+        compose_code_unavailable(layout, display_state->nfc_presenting);
+    }
 
     /* Wi-Fi first, gallery second, in the order specification 2.7 fixes. */
     const char* page_title = page == RemoteDisplayPageWifi ? "Wi-Fi" : "Gallery";

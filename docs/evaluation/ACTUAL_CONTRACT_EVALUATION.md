@@ -35,6 +35,7 @@ uncertainties, and which author decisions are still open.
 | Experiments | `FD4`, `FD15` to `FD17` | DONE 2026-09-11, brought forward from FE5 and FE6 at the author's direction so the two guest facing surfaces were proven on hardware before any protocol or appliance work. Both surfaces work. Recorded as a build order deviation in `IMPLEMENTATION_DEVIATIONS.md`. |
 | FE3 | Protocol, peer, fuzz | DONE 2026-09-11 on the automated side. Provisional protocol drafted in `PROTOCOL.md` and `protocol.json`; parser and encoder generated from one table; parser fuzzed clean; development peer with misbehaviour modes and a serial shell. Decisions `FD7`, `FD8`, `FD9` and the framing settled by the author for the provisional period; frozen at `FD20`. No hardware gate: FE3 touches no device. |
 | FE4 | Transport, session | DONE 2026-09-11, hardware gate cleared the same day. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. On the device against the Pi: handshake, all four reported buttons, both lock transitions, and reconnection after a cable pull all confirmed. Five bugs surfaced only at the gate and are recorded under "Hardware findings, FE4" below; none was visible to the host tests, because each lived in the SDK glue or the peer's OS I/O, neither of which is host tested. |
+| FE5 | QR rendering | DONE 2026-09-12 on the automated side; the scanning hardware gate is the author's and was brought forward and cleared for the two real payloads at the FD4 experiment (a phone read the Wi-Fi and gallery codes at close range). The published vector criterion is met by `tests/test_remote_qr_vectors.c`: four whole matrices spanning versions 1 to 3 and both alphanumeric and byte modes, emitted by the product path and reproduced module for module by libqrencode, an encoder unrelated to the vendored one (4.4, "Published vector cross check"). An oversized payload is refused by the encoder and now shows a distinct message in the code area rather than the empty frame that read as a broken code (`remote_display_layout.c`, `compose_code_unavailable`), tested in `test_remote_display_layout.c`. A measured finding at this phase: with the appliance's real credential generator a guest SSID prefix longer than about 8 characters pushes the Wi-Fi payload past the version 3 ceiling, so the QR cannot be shown; the Flipper now falls back to NFC (presented independently of QR fit) with a "tap to join" message, and the constraint (keep `prefix + passphrase <= 28`) is recorded for the appliance and seam under 4.4, "Payload budget and the QR to NFC fallback". |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -593,7 +594,7 @@ not yet met are listed at the end and are not claimed.
 | Size on device | the FAP grew from 12,080 to 20,164 bytes with the encoder, the wrapper, the bitmap and the fixtures; `.text` from 7,027 to 11,904 bytes |
 | Allocation | none on the heap, stated in the source header (`qrcodegen.c:45-46`) and confirmed by grep: no `malloc`, `calloc`, `free` or `alloca`. Buffers are caller supplied and sized by `qrcodegen_BUFFER_LEN_FOR_VERSION`, 106 bytes for the version 3 ceiling |
 | Security implications | it consumes the payload the appliance supplies, which is untrusted input on the same terms as the rest of the protocol. It writes only into the two caller sized buffers, both bounded at compile time in `remote_display/remote_qr.h`. `qrcodegen_encodeText` refuses rather than overruns when the text does not fit the version range. It runs under the sanitiser build on every test run |
-| Test strategy | `tests/test_remote_qr.c`: version selection for the two experiment payloads, finder patterns at the three corners, the 53 byte bound of version 3 at the lowest error correction exactly at and one over, empty payload refused, bitmap placement. Matching full matrices against published vectors is FE5's criterion and is NOT yet done |
+| Test strategy | `tests/test_remote_qr.c`: version selection for the two experiment payloads, finder patterns at the three corners, the 53 byte bound of version 3 at the lowest error correction exactly at and one over, empty payload refused, bitmap placement. Matching full matrices against published vectors is done at FE5 in `tests/test_remote_qr_vectors.c` (see "Published vector cross check" below) |
 | Replacement cost | the wrapper in `remote_display/remote_qr.c` is the only caller, four functions, and holds the version ceiling; another encoder would replace one file and the private library entry |
 | Warnings | compiles clean under the SDK's set on the device and on MinGW gcc 15. Linux gcc 15 on aarch64 flags `-Wconversion` at four lines inside the library; that flag is this project's extra above the SDK set, so the host build applies the SDK set to vendored code and the extras to project code (`Makefile`) |
 
@@ -621,6 +622,59 @@ Consequences for `FD4`, arithmetic only, scanning is HARDWARE:
   (`adjective.noun.NNN`, up to about 18 characters) fits with a little room.
 - The gallery address `HTTP://192.168.72.1/`, upper case for alphanumeric
   mode, is version 1 at 42 pixels, centred with a four module quiet zone.
+
+### Published vector cross check (FE5), ADDED 2026-09-12
+
+FE5's "known payload produces a known matrix, against published test vectors" is
+met by `tests/test_remote_qr_vectors.c` against `tests/qr_published_vectors.h`.
+The vectors are whole module matrices emitted by the product path
+`remote_qr_encode()` and reproduced module for module by libqrencode (Kentaro
+Fukuchi's implementation, Ubuntu package `qrencode` 4.1.1), which shares no code
+with the vendored nayuki encoder, so an exact match is evidence in both rather
+than a snapshot of one. Four vectors span versions 1 to 3 and both alphanumeric
+and byte modes, at the error correction level `boostEcl` settled on. The header
+is generated by `scripts/generate_qr_vectors.sh` (self contained: it fetches
+`qrencode` into a private prefix, needs no root, and refuses to write on any
+mismatch) and is committed, so continuous integration needs neither the tool nor
+the script. Payloads where the two encoders pick different, equally valid, data
+mask patterns are not used as vectors, since only an exact match is evidence; the
+numeric ISO example `01234567` is one such (both encode version 1-H, differing
+only in the mask).
+
+### Payload budget and the QR to NFC fallback (FE5), ADDED 2026-09-12
+
+The 53 byte version 3 ceiling is a hardware limit, not a preference: at a
+scannable two pixels per module the 64 pixel screen holds at most 29 modules
+(version 3) even full width, so no layout change raises it. Measured against the
+real credential generator (`internal/infrastructure/identity/` in the appliance:
+SSID is an operator prefix plus `-` plus six characters, the random passphrase is
+twenty characters, the memorable passphrase `adjective.noun.NNN` is eleven to
+twenty three), the Wi-Fi payload `WIFI:T:WPA;S:<ssid>;P:<pass>;;` costs 25 bytes
+fixed, leaving a budget of `prefix length + passphrase length <= 28`:
+
+- Random (20) fits only when the guest SSID prefix is at most 8 characters.
+- Memorable (up to 23) needs a prefix of about 5 (worst case) to 12 (a typical
+  16 character phrase), so it is marginal.
+- A prefix like `stopbath-guest` (14) puts both forms at 55 to 61 bytes, over the
+  ceiling. Upper casing does not help: the `;` separators force byte mode.
+
+This is a seam constraint the appliance owns (FE5 excludes deciding payload
+contents): the protocol permits a Wi-Fi payload up to about 200 bytes
+(`PERIPHERAL_SEAM.md` maximum payload), far beyond the QR scannable budget, so a
+payload the protocol accepts can be one the Flipper cannot show as a QR. The
+recommendation recorded here, for the appliance and the seam, is to keep the
+guest SSID prefix short enough that `prefix + passphrase <= 28`, since the QR is
+the universal join path (an iPhone does not do NFC Wi-Fi handover).
+
+On the Flipper side, a payload over the ceiling no longer draws the empty frame
+that read as a broken code (that was the pre-FE5 behaviour). The code area shows
+a distinct message, and NFC is now presented independently of whether the QR fits
+(`remote_display_layout.c` `code_page_active`, driven separately from
+`qr_area_shown` in `stopbath_remote.c`), because NDEF holds up to 256 bytes and a
+tap is the fallback. When that NFC surface is live the code area message becomes
+"Too big / tap to join" rather than a dead end; it states the fault only when NFC
+is not presenting. This helps Android; the iPhone case is why the appliance side
+recommendation stands.
 
 ## NFC: `FD15`, `FD16`, `FD17`
 

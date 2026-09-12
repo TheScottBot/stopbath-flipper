@@ -260,16 +260,23 @@ static void recompose_screen(StopBathRemoteApplication* remote_application) {
     RemoteDisplayLayout layout;
     remote_display_layout_compose(&remote_application->display_state, &layout);
 
+    /* The QR is drawn only when the payload fits the version 3 ceiling
+     * (layout.qr_area_shown). NFC is presented on any active code page
+     * (layout.code_page_active), fit or not, because NDEF has no such small
+     * ceiling and a tap is the fallback for a payload too large to scan (FE5,
+     * FE6). The two surfaces are therefore decided by two different flags. */
     RemoteQrBitmap code_bitmap;
     bool code_bitmap_valid = false;
-    RemoteNdefMessage ndef_message;
-    bool ndef_message_valid = false;
     if(layout.qr_area_shown) {
         RemoteQrMatrix code_matrix;
         if(remote_qr_encode(remote_application->display_state.payload, &code_matrix)) {
             remote_qr_render_bitmap(&code_matrix, &code_bitmap);
             code_bitmap_valid = true;
         }
+    }
+    RemoteNdefMessage ndef_message;
+    bool ndef_message_valid = false;
+    if(layout.code_page_active) {
         if(remote_application->display_state.page == RemoteDisplayPageWifi) {
             ndef_message_valid = remote_ndef_build_wifi_message(remote_application->display_state.payload, &ndef_message);
         } else if(remote_application->display_state.page == RemoteDisplayPageGuest) {

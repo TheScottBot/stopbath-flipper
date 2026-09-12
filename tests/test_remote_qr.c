@@ -6,7 +6,10 @@
  * modules at two pixels each, centred.
  *
  * Matching against published full matrix vectors is FE5's own criterion and
- * is not claimed here.
+ * is met separately, in test_remote_qr_vectors.c, which checks whole matrices
+ * against an independent encoder. This file keeps the structural checks (finder
+ * placement, version sizing, the refusal bound, the bitmap geometry) that do
+ * not need a reference matrix.
  */
 #include "test_support.h"
 

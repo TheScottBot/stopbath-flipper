@@ -34,6 +34,14 @@ bool remote_qr_encode(const char* payload, RemoteQrMatrix* matrix) {
     return true;
 }
 
+bool remote_qr_can_encode(const char* payload) {
+    /* The matrix is large enough that it lives here rather than on the layout
+     * composer's stack; the encode is the same work the render will repeat, and
+     * neither allocates. */
+    RemoteQrMatrix matrix;
+    return remote_qr_encode(payload, &matrix);
+}
+
 bool remote_qr_module_is_dark(const RemoteQrMatrix* matrix, int x, int y) {
     if(matrix->side == 0 || x < 0 || y < 0 || x >= matrix->side || y >= matrix->side) {
         return false;

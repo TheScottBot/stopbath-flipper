@@ -156,6 +156,12 @@ typedef struct {
     int qr_x;
     int qr_y;
     int qr_size;
+    /* True whenever this is an active code page (a Wi-Fi or gallery page the
+     * appliance is presenting), whether or not the payload fits the QR. The
+     * glue presents the NFC record on this, not on qr_area_shown, so a payload
+     * too large for the version 3 QR still reaches a phone by a tap (FE5, FE6):
+     * NDEF has no such small ceiling. */
+    bool code_page_active;
 } RemoteDisplayLayout;
 
 /* Composes the whole screen for one state. Never fails: an unrecognised

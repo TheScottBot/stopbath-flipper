@@ -44,6 +44,13 @@ typedef struct {
  * library where a higher level fits in the same version. */
 bool remote_qr_encode(const char* payload, RemoteQrMatrix* matrix);
 
+/* Whether remote_qr_encode would succeed for this payload, without keeping the
+ * matrix. The layout uses it to decide, before it composes, whether a code page
+ * can show its code or must show a distinct error in its place (FE5: an
+ * oversized payload is refused with a distinct error rather than rendering
+ * something unscannable). */
+bool remote_qr_can_encode(const char* payload);
+
 bool remote_qr_module_is_dark(const RemoteQrMatrix* matrix, int x, int y);
 
 /* An XBM bitmap covering the whole code area, the symbol drawn at two pixels

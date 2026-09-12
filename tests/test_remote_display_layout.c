@@ -233,6 +233,58 @@ static void a_page_with_an_empty_payload_still_frames_the_code_area(RemoteTestRe
     REMOTE_TEST_ASSERT(report, layout.qr_area_shown, "the frame is drawn even with nothing to encode");
 }
 
+static void an_oversized_payload_shows_a_distinct_error_not_a_code(RemoteTestReport* report) {
+    /* FE5: a payload the version 3 ceiling cannot hold must not be handed to
+     * the code area, where the encoder would refuse it and the glue draw an
+     * empty frame that reads as a code failing to scan. The code area instead
+     * carries a distinct message, and no QR is attempted; the column keeps its
+     * context so the photographer still sees which page this was. */
+    RemoteDisplayState display_state = *fixture_named("presenting wifi");
+    memset(display_state.payload, 'x', 200);
+    display_state.payload[200] = '\0';
+    display_state.nfc_presenting = false;
+    RemoteDisplayLayout layout;
+    remote_display_layout_compose(&display_state, &layout);
+
+    REMOTE_TEST_ASSERT(report, !layout.qr_area_shown, "no code area for a payload that cannot be encoded");
+    REMOTE_TEST_ASSERT(report, layout.code_page_active, "still an active code page, so NFC is presented");
+    assert_text_placed(report, &layout, (ExpectedText){"Code", 29, 30, RemoteLayoutFontPrimary, RemoteLayoutAnchorCenter, false});
+    assert_text_placed(report, &layout, (ExpectedText){"too big", 29, 44, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, false});
+    REMOTE_TEST_ASSERT(report, shape_present(&layout, RemoteLayoutShapeFrame, REMOTE_LAYOUT_QR_X, REMOTE_LAYOUT_QR_Y, REMOTE_LAYOUT_QR_SIZE, REMOTE_LAYOUT_QR_SIZE), "the code area is framed around the message");
+    assert_text_placed(report, &layout, (ExpectedText){"Wi-Fi", REMOTE_LAYOUT_COLUMN_X, 23, RemoteLayoutFontPrimary, RemoteLayoutAnchorLeft, false});
+}
+
+static void an_oversized_payload_with_nfc_up_sends_the_guest_to_the_tap(RemoteTestReport* report) {
+    /* FE5/FE6: when the payload will not fit the QR but the NFC surface is
+     * presenting the same record, the code area directs the guest to tap rather
+     * than reading as a dead end. NDEF has no version 3 ceiling, so the tap is a
+     * real path. */
+    RemoteDisplayState display_state = *fixture_named("presenting wifi");
+    memset(display_state.payload, 'x', 200);
+    display_state.payload[200] = '\0';
+    display_state.nfc_presenting = true;
+    RemoteDisplayLayout layout;
+    remote_display_layout_compose(&display_state, &layout);
+
+    REMOTE_TEST_ASSERT(report, !layout.qr_area_shown, "still no QR");
+    REMOTE_TEST_ASSERT(report, layout.code_page_active, "an active code page");
+    assert_text_placed(report, &layout, (ExpectedText){"Too big", 29, 30, RemoteLayoutFontPrimary, RemoteLayoutAnchorCenter, false});
+    assert_text_placed(report, &layout, (ExpectedText){"tap to join", 29, 44, RemoteLayoutFontSecondary, RemoteLayoutAnchorCenter, false});
+    assert_text_absent(report, &layout, "too big");
+}
+
+static void a_payload_at_the_ceiling_still_shows_a_code(RemoteTestReport* report) {
+    /* The boundary: the largest payload that encodes keeps the code area, so
+     * the error path is reserved for what genuinely will not fit. */
+    RemoteDisplayState display_state = *fixture_named("presenting guest");
+    memset(display_state.payload, 'X', 40);
+    display_state.payload[40] = '\0';
+    RemoteDisplayLayout layout;
+    remote_display_layout_compose(&display_state, &layout);
+    REMOTE_TEST_ASSERT(report, layout.qr_area_shown, "an encodable payload keeps its code");
+    assert_text_absent(report, &layout, "too big");
+}
+
 static void an_error_is_an_inverted_band_at_the_bottom(RemoteTestReport* report) {
     RemoteDisplayLayout ready = compose_named(report, "ready with error");
     REMOTE_TEST_ASSERT(report, shape_present(&ready, RemoteLayoutShapeFilledBox, 0, REMOTE_LAYOUT_ERROR_BAND_Y, 128, REMOTE_LAYOUT_ERROR_BAND_HEIGHT), "band box");
@@ -396,6 +448,9 @@ int main(void) {
         {"the status decides the screen not the page", the_status_decides_the_screen_not_the_page},
         {"an active status with no page falls back to a centred status", an_active_status_with_no_page_falls_back_to_a_centred_status},
         {"a page with an empty payload still frames the code area", a_page_with_an_empty_payload_still_frames_the_code_area},
+        {"an oversized payload shows a distinct error not a code", an_oversized_payload_shows_a_distinct_error_not_a_code},
+        {"an oversized payload with nfc up sends the guest to the tap", an_oversized_payload_with_nfc_up_sends_the_guest_to_the_tap},
+        {"a payload at the ceiling still shows a code", a_payload_at_the_ceiling_still_shows_a_code},
         {"an error is an inverted band at the bottom", an_error_is_an_inverted_band_at_the_bottom},
         {"no error means no band", no_error_means_no_band},
         {"locked inverts the full header on a screen without a code", locked_inverts_the_full_header_on_a_screen_without_a_code},
