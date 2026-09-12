@@ -176,3 +176,13 @@ Record handset, operating system version, and which of the three happened.
   acquisition and release, and exercising it requires the firmware. The
   translation is written as exhaustive switches so the compiler's `-Werror`
   catches a missing case; the behaviour behind it is fully tested in the model.
+
+## Diagnosing on hardware
+
+The application logs its link state, handshake retries, received DISPLAY records
+(with their error codes), and diagnostic counters to the firmware log, and keeps
+the firmware command line on USB channel 0 while the link runs on channel 1. So
+a fault on the device can be watched live from the appliance rather than inferred
+after the fact. See `docs/DIAGNOSTICS.md` for how to read it from the Pi and how
+to read the common faults. The handshake retry that recovers a lost acceptance is
+tested in `tests/test_remote_session.c`.

@@ -326,6 +326,59 @@ static void an_invalid_token_is_replaced_with_a_safe_default(RemoteTestReport* r
     REMOTE_TEST_ASSERT_EQUAL_INT(report, RemoteProtocolVerbHello, decoded.verb, "hello");
 }
 
+static void a_stalled_handshake_retries_hello(RemoteTestReport* report) {
+    /* The appliance's DISPLAY acceptance can be lost, or an appliance may fail
+     * to resend it on a reconnect; rather than hang in "connecting" forever, the
+     * session re-sends HELLO once the retry interval passes. */
+    RemoteSession session;
+    remote_session_initialise(&session, "flipper-zero");
+    remote_session_port_opened(&session);
+    char output[256];
+    take_output(&session, output, sizeof(output));
+    REMOTE_TEST_ASSERT(report, strncmp(output, "HELLO", 5) == 0, "first hello sent");
+
+    /* Time under the interval sends nothing. */
+    remote_session_tick(&session, REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS - 1);
+    take_output(&session, output, sizeof(output));
+    REMOTE_TEST_ASSERT(report, output[0] == '\0', "no retry before the interval");
+
+    /* Crossing it re-sends HELLO, staying in the handshake. */
+    remote_session_tick(&session, 1);
+    take_output(&session, output, sizeof(output));
+    REMOTE_TEST_ASSERT(report, strcmp(output, "HELLO version=1 peripheral=flipper-zero locked=0\n") == 0, "hello resent");
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, 1, (int)session.handshake_retries, "retry counted");
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, RemoteSessionHandshaking, session.link_state, "still handshaking");
+}
+
+static void the_retry_stops_once_connected(RemoteTestReport* report) {
+    RemoteSession session;
+    remote_session_initialise(&session, "flipper-zero");
+    remote_session_port_opened(&session);
+    char output[256];
+    take_output(&session, output, sizeof(output));
+    receive_display(&session, RemoteProtocolStatusReady, RemoteProtocolPageNone, "", 0, RemoteProtocolErrorNone);
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, RemoteSessionConnected, session.link_state, "connected");
+
+    /* Long after connecting, no HELLO is resent and none is counted. */
+    remote_session_tick(&session, REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS * 3);
+    take_output(&session, output, sizeof(output));
+    REMOTE_TEST_ASSERT(report, output[0] == '\0', "no retry once connected");
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, 0, (int)session.handshake_retries, "no retries counted");
+}
+
+static void a_retry_does_not_pile_up_hellos(RemoteTestReport* report) {
+    /* Several intervals passing before the output drains still leaves exactly
+     * one fresh HELLO, never a stack that would then flood the appliance. */
+    RemoteSession session;
+    remote_session_initialise(&session, "flipper-zero");
+    remote_session_port_opened(&session);
+    remote_session_tick(&session, REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS);
+    remote_session_tick(&session, REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS);
+    char output[512];
+    take_output(&session, output, sizeof(output));
+    REMOTE_TEST_ASSERT(report, strcmp(output, "HELLO version=1 peripheral=flipper-zero locked=0\n") == 0, "exactly one hello queued");
+}
+
 int main(void) {
     static const RemoteTestCase test_cases[] = {
         {"a fresh session is down and silent", a_fresh_session_is_down_and_silent},
@@ -343,6 +396,9 @@ int main(void) {
         {"malformed and unexpected verbs are counted not rendered", malformed_and_unexpected_verbs_are_counted_not_rendered},
         {"the output buffer drops rather than overflows", the_output_buffer_drops_rather_than_overflows},
         {"an invalid token is replaced with a safe default", an_invalid_token_is_replaced_with_a_safe_default},
+        {"a stalled handshake retries hello", a_stalled_handshake_retries_hello},
+        {"the retry stops once connected", the_retry_stops_once_connected},
+        {"a retry does not pile up hellos", a_retry_does_not_pile_up_hellos},
     };
     return remote_test_run_all(test_cases, REMOTE_TEST_ROW_COUNT(test_cases));
 }

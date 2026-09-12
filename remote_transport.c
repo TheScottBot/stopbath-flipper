@@ -8,6 +8,11 @@
 #include <furi_hal_power.h>
 #include <cli/cli_vcp.h>
 
+/* Log tag for the physical link edges, distinct from the application's own tag
+ * so the two are told apart in the firmware log (docs/DIAGNOSTICS.md). Only the
+ * service loop logs, never the USB callbacks, which run in interrupt context. */
+#define TAG "StopBathLink"
+
 /* The link runs on channel 1 (usb_cdc_dual), leaving the firmware command
  * line on channel 0 so the host can still launch the application, read the
  * log, and see free heap while the link runs (evaluation log 4.2). */
@@ -185,8 +190,10 @@ void remote_transport_service(RemoteTransport* transport) {
     if(port_open_now != transport->port_open) {
         transport->port_open = port_open_now;
         if(port_open_now) {
+            FURI_LOG_I(TAG, "port opened (usb=%d dtr=%d): handshaking", transport->usb_present, transport->dtr_present);
             remote_session_port_opened(transport->session);
         } else {
+            FURI_LOG_I(TAG, "port closed (usb=%d dtr=%d): unsent dropped", transport->usb_present, transport->dtr_present);
             remote_session_port_closed(transport->session);
             /* A transmit may have been in flight when the cable was pulled,
              * in which case the tx complete interrupt never fires and the

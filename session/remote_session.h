@@ -67,13 +67,26 @@ typedef struct {
     /* How many whole messages are queued: the protocol's outbound queue
      * depth is a message count, not a byte count, so it is bounded here. */
     int output_message_count;
+    /* Milliseconds spent in the handshake since the last HELLO, so a lost
+     * handshake is retried rather than hung on forever. Meaningful only while
+     * handshaking; reset on entering and leaving that state. */
+    uint32_t handshake_elapsed_milliseconds;
     /* Diagnostics for the view specification 2.11 asks for. */
     uint32_t reconnections;
     uint32_t malformed_received;
     uint32_t version_mismatches;
     uint32_t events_dropped_by_guard;
     uint32_t events_dropped_by_output_full;
+    uint32_t handshake_retries;
 } RemoteSession;
+
+/* How long to wait for the appliance's DISPLAY acceptance before re-sending
+ * HELLO. The DISPLAY is the acceptance (PROTOCOL.md handshake); a HELLO or the
+ * acceptance can be lost, and the appliance treats a second HELLO as a restart
+ * that resends the record (seam 4.2), so a periodic retry recovers a handshake
+ * that would otherwise hang. Well under the inbound rate bound, so it is never
+ * mistaken for a flood. */
+#define REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS 2000
 
 /* peripheral_token is copied and must be a valid protocol token
  * (lower case, digits, hyphen, 1 to 32 characters); an invalid one is
@@ -89,6 +102,13 @@ void remote_session_port_opened(RemoteSession* session);
  * button that was encoded but not yet drained is discarded here, which is
  * how a stale press is prevented from crossing a reconnection. */
 void remote_session_port_closed(RemoteSession* session);
+
+/* Advances the handshake retry clock by the elapsed time since the last call.
+ * While the link is handshaking, re-sends HELLO once the retry interval passes,
+ * so a lost handshake recovers on its own instead of hanging in "connecting".
+ * A no-op in every other link state. The caller passes its own loop interval;
+ * the session keeps no clock of its own, so it stays host testable. */
+void remote_session_tick(RemoteSession* session, uint32_t elapsed_milliseconds);
 
 /* Feeds bytes received from the appliance. Complete DISPLAY records replace
  * the current one; a BAD_VERSION answer marks the link incompatible;

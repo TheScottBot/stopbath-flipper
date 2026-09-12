@@ -26,6 +26,12 @@
 #include "remote_transport.h"
 #include "session/remote_session.h"
 
+/* The firmware log tag. The application keeps the firmware command line on USB
+ * channel 0 while the link runs on channel 1, so a development machine can open
+ * channel 0 and run `log` to watch this trace live while the link works. See
+ * docs/DIAGNOSTICS.md. */
+#define TAG "StopBathRemote"
+
 /* The identifier this peripheral sends in HELLO. A token, not a name. */
 #define PERIPHERAL_TOKEN "flipper-zero"
 
@@ -87,6 +93,17 @@ typedef struct {
     RemoteDisplayState display_state;
     uint32_t dropped_input_events;
     NfcPresentation nfc_presentation;
+    /* Remembered values so the diagnostic trace logs each change once, rather
+     * than every loop. Zeroed at start, which matches the initial link and
+     * display, so nothing spurious is logged before anything happens. */
+    RemoteSessionLinkState traced_link_state;
+    uint32_t traced_reconnections;
+    uint32_t traced_malformed;
+    uint32_t traced_guard_drops;
+    uint32_t traced_output_drops;
+    uint32_t traced_handshake_retries;
+    int traced_status;
+    char traced_error_code[REMOTE_DISPLAY_ERROR_CODE_CAPACITY];
 } StopBathRemoteApplication;
 
 static NfcCommand nfc_presentation_listener_callback(NfcGenericEvent event, void* opaque_application_pointer) {
@@ -349,6 +366,96 @@ static bool apply_input_event(StopBathRemoteApplication* remote_application, con
     return false;
 }
 
+static const char* link_state_name(RemoteSessionLinkState link_state) {
+    switch(link_state) {
+    case RemoteSessionLinkDown:
+        return "link-down";
+    case RemoteSessionHandshaking:
+        return "handshaking";
+    case RemoteSessionConnected:
+        return "connected";
+    case RemoteSessionIncompatible:
+        return "incompatible";
+    }
+    return "unknown";
+}
+
+/*
+ * Emits a line to the firmware log whenever something the operator would want
+ * to see changes: the link state, the handshake retrying, the display record
+ * the appliance sent (its status and error code, so a rejection like ACTIVE or
+ * BAD_VALUE is visible), and the diagnostic counters. Read live on a
+ * development machine with the firmware `log` command over channel 0, which
+ * this application leaves the command line on (docs/DIAGNOSTICS.md). Logs only
+ * on change, so it is quiet when nothing is happening.
+ */
+static void trace_diagnostics(StopBathRemoteApplication* remote_application) {
+    RemoteSession* session = &remote_application->session;
+
+    if(session->link_state != remote_application->traced_link_state) {
+        FURI_LOG_I(
+            TAG,
+            "link %s -> %s",
+            link_state_name(remote_application->traced_link_state),
+            link_state_name(session->link_state));
+        remote_application->traced_link_state = session->link_state;
+    }
+    if(session->handshake_retries != remote_application->traced_handshake_retries) {
+        FURI_LOG_W(
+            TAG,
+            "handshake retry #%lu: no DISPLAY acceptance within %dms, resending HELLO",
+            (unsigned long)session->handshake_retries,
+            REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS);
+        remote_application->traced_handshake_retries = session->handshake_retries;
+    }
+    if(session->reconnections != remote_application->traced_reconnections) {
+        FURI_LOG_I(TAG, "reconnections=%lu", (unsigned long)session->reconnections);
+        remote_application->traced_reconnections = session->reconnections;
+    }
+    if(session->malformed_received != remote_application->traced_malformed) {
+        FURI_LOG_W(
+            TAG,
+            "malformed or unexpected from appliance total=%lu",
+            (unsigned long)session->malformed_received);
+        remote_application->traced_malformed = session->malformed_received;
+    }
+    if(session->events_dropped_by_guard != remote_application->traced_guard_drops) {
+        FURI_LOG_I(
+            TAG,
+            "button dropped by guard total=%lu",
+            (unsigned long)session->events_dropped_by_guard);
+        remote_application->traced_guard_drops = session->events_dropped_by_guard;
+    }
+    if(session->events_dropped_by_output_full != remote_application->traced_output_drops) {
+        FURI_LOG_W(
+            TAG,
+            "button dropped, outbound queue full total=%lu",
+            (unsigned long)session->events_dropped_by_output_full);
+        remote_application->traced_output_drops = session->events_dropped_by_output_full;
+    }
+
+    /* The record the appliance sent, while connected: its status and any error
+     * code, which is where a rejection the operator sees on screen shows up. */
+    if(session->link_state == RemoteSessionConnected) {
+        int status = remote_application->display_state.status;
+        const char* error_code = remote_application->display_state.error_code;
+        if(status != remote_application->traced_status ||
+           strcmp(error_code, remote_application->traced_error_code) != 0) {
+            if(error_code[0] != '\0') {
+                FURI_LOG_W(TAG, "DISPLAY status=%d error=%s", status, error_code);
+            } else {
+                FURI_LOG_I(TAG, "DISPLAY status=%d", status);
+            }
+            remote_application->traced_status = status;
+            snprintf(
+                remote_application->traced_error_code,
+                sizeof(remote_application->traced_error_code),
+                "%s",
+                error_code);
+        }
+    }
+}
+
 int32_t stopbath_remote_main(void* launch_arguments) {
     UNUSED(launch_arguments);
 
@@ -387,12 +494,24 @@ int32_t stopbath_remote_main(void* launch_arguments) {
 
     recompose_screen(&remote_application);
 
+    const uint32_t tick_frequency = furi_kernel_get_tick_frequency();
+    uint32_t last_service_tick = furi_get_tick();
     bool exit_requested = false;
     while(!exit_requested) {
         if(!link_opened && furi_get_tick() >= next_open_attempt_tick) {
             link_opened = remote_transport_open(remote_application.transport);
             next_open_attempt_tick = furi_get_tick() + furi_ms_to_ticks(LINK_OPEN_RETRY_INTERVAL_MILLISECONDS);
         }
+
+        /* Advance the handshake retry clock by the real time elapsed, so a lost
+         * DISPLAY acceptance is retried rather than hung on. Done before the
+         * service so a retry's HELLO is sent this pass. */
+        uint32_t now_tick = furi_get_tick();
+        uint32_t elapsed_milliseconds =
+            (uint32_t)(((uint64_t)(now_tick - last_service_tick) * 1000u) / tick_frequency);
+        last_service_tick = now_tick;
+        remote_session_tick(&remote_application.session, elapsed_milliseconds);
+
         remote_transport_service(remote_application.transport);
 
         InputEvent input_event;
@@ -405,6 +524,7 @@ int32_t stopbath_remote_main(void* launch_arguments) {
         }
 
         recompose_screen(&remote_application);
+        trace_diagnostics(&remote_application);
         view_port_update(view_port);
     }
 

@@ -75,6 +75,26 @@ void remote_session_port_opened(RemoteSession* session) {
     session->output_message_count = 0;
     reset_display_record(&session->current_display);
     session->link_state = RemoteSessionHandshaking;
+    session->handshake_elapsed_milliseconds = 0;
+    send_hello(session);
+}
+
+void remote_session_tick(RemoteSession* session, uint32_t elapsed_milliseconds) {
+    if(session->link_state != RemoteSessionHandshaking) {
+        session->handshake_elapsed_milliseconds = 0;
+        return;
+    }
+    session->handshake_elapsed_milliseconds += elapsed_milliseconds;
+    if(session->handshake_elapsed_milliseconds < REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS) {
+        return;
+    }
+    session->handshake_elapsed_milliseconds = 0;
+    session->handshake_retries++;
+    /* Only a stale HELLO can be queued while handshaking (a button is sent only
+     * while connected), so clearing the output leaves exactly one fresh HELLO
+     * rather than letting copies pile up if the previous one was slow to drain. */
+    session->output_length = 0;
+    session->output_message_count = 0;
     send_hello(session);
 }
 

@@ -918,3 +918,58 @@ Recorded here so they are not lost; none is decided here.
 Defects 1 and 2 above are RESOLVED in the main specification as of the author's
 2026-09-11 revision: `D30` now exists and settles the gallery address on the bare
 local address, and `D3` was amended alongside it.
+
+## Appliance conformance findings from hardware (2026-09-12)
+
+Found by the author running the Flipper application against the real StopBath
+appliance (not the development peer). Each is the appliance's behaviour against
+the protocol the Flipper is conformant to; they are recorded here as input to the
+FD20 promotion review and the PE-phase conformance tests, and none is fixed in
+this repository (the appliance is a separate repository, not modified here). The
+Flipper's own side was checked against its host tests in each case and is
+behaving to contract; the mitigations added on the Flipper are noted.
+
+1. **No DISPLAY acceptance on a live-session reconnect.** After an unplug and
+   replug while a session is running, the appliance logs `peripheral connected`
+   (it parsed the HELLO) but does not send the DISPLAY that is the handshake
+   acceptance (PROTOCOL.md handshake; seam 4.2 "resend the full record"). The
+   Flipper, correct to send HELLO and wait for the DISPLAY, hangs in "reconnecting"
+   until a state change (killing the session from the dashboard) forces a DISPLAY,
+   which it then receives and renders. Proof it is the send, not the Flipper's
+   receive: the kill DISPLAY is received fine on the same reconnected link. Fix:
+   send the current DISPLAY after every successful HELLO, reconnect included.
+
+2. **`BAD_VALUE` for a valid `BACK_SHORT` event.** A short back press reports
+   `BACK_SHORT`, which is in the protocol event set (`protocol.json`) and required
+   by Flipper spec 2.3. The appliance answers `BAD_VALUE` ("value outside its type
+   or bound"), which is wrong for a value that is in the enum. Its action is still
+   undecided (seam Q13); a valid-but-unmapped event should be a no-op, never a
+   value rejection. Q13 is now urgent, since leaving it open makes a pocket press
+   an error.
+
+3. **Freeze on repeated button presses.** Spamming back produces repeated
+   `BAD_VALUE` (finding 2), which the appliance counts toward its consecutive
+   malformed or rate link-drop (`consecutive_malformed_before_link_drop`), drops
+   the link, and then finding 1 keeps it from re-accepting until the session is
+   killed from the web app: the device is locked out. Two errors: a valid event
+   value must not count toward a "peer speaking gibberish" drop, and a reconnect
+   must resend the DISPLAY (finding 1). The Flipper cannot freeze on its own here;
+   while connected it only paints error banners, so a freeze requires the
+   appliance to stop responding.
+
+4. **`ACTIVE` for a redundant `CENTER_SHORT` (minor).** Pressing centre while a
+   session runs reports `CENTER_SHORT` (start), which the appliance correctly
+   rejects with `ACTIVE`. Working as designed; the only wart is a cryptic code on
+   a guest-facing screen for a natural mis-press. The appliance could no-op a
+   redundant start instead.
+
+Flipper mitigations added 2026-09-12, neither a substitute for the appliance
+fixes: a bounded handshake retry re-sends HELLO every
+`REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS` (2000) while stuck
+handshaking, so a lost acceptance recovers on its own (it recovers finding 1 only
+if the appliance resends the record on a repeated HELLO, which seam 4.2 requires);
+and a firmware-log trace (`docs/DIAGNOSTICS.md`) makes the link state, handshake
+retries, received DISPLAY records with their error codes, and the diagnostic
+counters visible live over the command line on channel 0 while the link runs on
+channel 1, so the next such fault is diagnosed from the trace rather than by
+inference.

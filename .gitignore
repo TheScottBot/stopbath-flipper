@@ -12,3 +12,6 @@ __pycache__/
 # Experiment credentials, compiled into the experiment build only. See
 # experiment_credentials.example.h.
 experiment_credentials.h
+
+#Jetbrains stuff
+.idea*
