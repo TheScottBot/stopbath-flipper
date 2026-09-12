@@ -3,6 +3,11 @@
  * experiment. The expected byte sequences are written out in full from the
  * sources recorded in the evaluation log, so the test is a vector, not a
  * restatement of the builder.
+ *
+ * FE6 adds the cross check against an independent implementation (ndeflib) in
+ * tests/test_remote_ndef_vectors.c; this file keeps the grammar and refusal
+ * cases (escaping, field order, malformed payloads, the buffer bound) that a
+ * reference encoder does not exercise.
  */
 #include "test_support.h"
 

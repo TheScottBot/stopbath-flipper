@@ -28,7 +28,7 @@ uncertainties, and which author decisions are still open.
 | 4.2 | Transport | READ. Three candidates enumerated from source with exports confirmed. Recommendation recorded for `FD2`. Host side enumeration and reconnection behaviour are HARDWARE and belong to Part 6 of the extension document. |
 | 4.3 | Power | Charge suppression API confirmed from source. Total draw is HARDWARE and unmeasured. |
 | 4.4 | Display and QR | Display geometry and drawing primitives confirmed from source. Rendering time, memory, daylight readability and scanning are HARDWARE. QR encoder candidate identified, not yet accepted. |
-| NFC | `FD15`, `FD16`, `FD17` | Runtime NDEF presentation has a real API surface (Type 4 Tag listener). All three decisions remain HARDWARE. |
+| NFC | `FD15`, `FD16`, `FD17` | Runtime NDEF presentation confirmed on hardware 2026-09-11 (Galaxy Z Fold3): the phone reads the record, QR and NFC coexist, and the Android join prompt appears. Record construction is cross checked against an independent encoder at FE6 (NFC section, "Published reference cross check"). Outstanding HARDWARE: an iPhone opening the gallery by a tap (FE6 gate). |
 | Lock | `FD19` | ANSWERED from source: the firmware lock is not reachable from an application. An application level lock is required. |
 | FE1 | Toolchain proof | DONE 2026-09-11. `ufbt 0.2.6` deploys the Unleashed SDK zip directly; the application builds warning clean at API 87.6; the host tests pass on MinGW and under the sanitisers in WSL. Hardware gate partly cleared by the author the same day. |
 | FE2 | Display | DONE 2026-09-11. Every display state composes from a fixture on the host; font metrics measured from the firmware's font data. Gate cleared by the author the same day, indoors. |
@@ -36,6 +36,7 @@ uncertainties, and which author decisions are still open.
 | FE3 | Protocol, peer, fuzz | DONE 2026-09-11 on the automated side. Provisional protocol drafted in `PROTOCOL.md` and `protocol.json`; parser and encoder generated from one table; parser fuzzed clean; development peer with misbehaviour modes and a serial shell. Decisions `FD7`, `FD8`, `FD9` and the framing settled by the author for the provisional period; frozen at `FD20`. No hardware gate: FE3 touches no device. |
 | FE4 | Transport, session | DONE 2026-09-11, hardware gate cleared the same day. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. On the device against the Pi: handshake, all four reported buttons, both lock transitions, and reconnection after a cable pull all confirmed. Five bugs surfaced only at the gate and are recorded under "Hardware findings, FE4" below; none was visible to the host tests, because each lived in the SDK glue or the peer's OS I/O, neither of which is host tested. |
 | FE5 | QR rendering | DONE 2026-09-12 on the automated side; the scanning hardware gate is the author's and was brought forward and cleared for the two real payloads at the FD4 experiment (a phone read the Wi-Fi and gallery codes at close range). The published vector criterion is met by `tests/test_remote_qr_vectors.c`: four whole matrices spanning versions 1 to 3 and both alphanumeric and byte modes, emitted by the product path and reproduced module for module by libqrencode, an encoder unrelated to the vendored one (4.4, "Published vector cross check"). An oversized payload is refused by the encoder and now shows a distinct message in the code area rather than the empty frame that read as a broken code (`remote_display_layout.c`, `compose_code_unavailable`), tested in `test_remote_display_layout.c`. A measured finding at this phase: with the appliance's real credential generator a guest SSID prefix longer than about 8 characters pushes the Wi-Fi payload past the version 3 ceiling, so the QR cannot be shown; the Flipper now falls back to NFC (presented independently of QR fit) with a "tap to join" message, and the constraint (keep `prefix + passphrase <= 28`) is recorded for the appliance and seam under 4.4, "Payload budget and the QR to NFC fallback". |
+| FE6 | NFC presentation | DONE 2026-09-12 on the automated side; the iPhone tap gate is the author's (the Android tap-to-join was cleared at the FD15 to FD17 experiment on the Galaxy Z Fold3). The URI record is checked byte for byte against published vectors, and the Wi-Fi credential against an independent reference, both produced by ndeflib (the nfcpy `ndef` package), in `tests/test_remote_ndef_vectors.c` (see the NFC section, "Published reference cross check"). The two structural criteria are proven: the QR and NFC record for one page derive from one value and cannot name different networks, and no payload is retained once a build refuses. FAP builds clean. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -805,6 +806,41 @@ Experiment status, HARDWARE, all three still open:
   runs. Whether the display and the NFC worker coexist is the answer.
 - `FD17` Wi-Fi credential Android accepts: the record is what Android's
   parser reads. Whether the join prompt appears is the answer.
+
+### Published reference cross check (FE6), ADDED 2026-09-12
+
+The experiment's vectors in `tests/test_remote_ndef.c` were written from the
+firmware's NDEF parser and Android's, not from a published source. FE6 adds that
+reference in `tests/test_remote_ndef_vectors.c` against
+`tests/ndef_published_vectors.h`, produced by ndeflib (the `ndef` package from
+the nfcpy project, version 0.3.3), an independent NDEF implementation that shares
+no code with `remote_display/remote_ndef.c`.
+
+- The URI record is compared byte for byte, and matches for the lowercase
+  `http` and `https` schemes and a scheme neither abbreviates. This builder
+  abbreviates the scheme case insensitively where ndeflib does not, so the upper
+  case gallery address (upper case for the QR's alphanumeric mode) is a
+  deliberate deviation, checked in `test_remote_ndef.c` rather than here; the
+  reconstructed URL is identical because the scheme is case insensitive.
+- The Wi-Fi credential is compared as a set of attribute TLVs: identical header,
+  media type, credential wrapper and length, and the same three attributes
+  (SSID `0x1045`, authentication type `0x1003` = `0x0020`, network key `0x1027`)
+  with the same values. Only the order within the credential differs, which is
+  not significant to a reader; this builder follows the WSC attribute order and
+  ndeflib does not.
+
+Two structural FE6 criteria are also proven in that suite. The QR and the NFC
+record for one page are built from the same payload string with no second source,
+and the test confirms the consequence that matters: the SSID and key in the
+record are the payload's own `S` and `P` fields, so the two surfaces cannot name
+different networks. And a build that refuses (wrong security type, empty address)
+leaves the message buffer zeroed, so no earlier payload is retained.
+
+Dependency note (spec 0.12): ndeflib is a generation-time tool only, like
+`qrencode` for the QR vectors. It is not vendored and not linked; it produces the
+committed header `tests/ndef_published_vectors.h`, so continuous integration and
+the device build never see it. Regenerate with
+`python3 scripts/generate_ndef_vectors.py` after `python3 -m pip install ndeflib`.
 
 ## Lock: `FD19`
 
