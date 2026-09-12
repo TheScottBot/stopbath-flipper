@@ -211,7 +211,6 @@ static void every_reportable_event_maps_to_its_wire_name(RemoteTestReport* repor
         {RemoteReportableEventCenterLong, "CENTER_LONG"},
         {RemoteReportableEventLeftShort, "LEFT_SHORT"},
         {RemoteReportableEventRightShort, "RIGHT_SHORT"},
-        {RemoteReportableEventBackShort, "BACK_SHORT"},
     };
     for(int row_index = 0; row_index < REMOTE_TEST_ROW_COUNT(rows); row_index++) {
         RemoteSession session;
@@ -308,7 +307,7 @@ static void the_output_buffer_drops_rather_than_overflows(RemoteTestReport* repo
     for(int repeat = 0; repeat < 100; repeat++) {
         if(remote_session_report_event(&session, RemoteReportableEventCenterShort, true)) transmitted++;
     }
-    REMOTE_TEST_ASSERT(report, transmitted <= (int)REMOTE_PROTOCOL_PERIPHERAL_OUTBOUND_QUEUE_DEPTH, "no more than the queue depth held");
+    REMOTE_TEST_ASSERT(report, transmitted <= (int)REMOTE_SESSION_OUTBOUND_QUEUE_DEPTH, "no more than the queue depth held");
     REMOTE_TEST_ASSERT(report, session.events_dropped_by_output_full > 0, "the rest dropped and counted");
     REMOTE_TEST_ASSERT(report, session.output_length <= sizeof(session.output), "within the buffer");
 }

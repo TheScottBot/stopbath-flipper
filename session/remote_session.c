@@ -43,10 +43,10 @@ static bool queue_message(RemoteSession* session, const RemoteProtocolMessage* m
     if(!remote_protocol_encode(message, (char*)line, sizeof(line), &line_length)) {
         return false;
     }
-    /* Bounded by the message count first (the protocol's queue depth), then
-     * by the byte buffer as a hard backstop. Either full drops the message
+    /* Bounded by the message count first (the session's outbound queue depth),
+     * then by the byte buffer as a hard backstop. Either full drops the message
      * whole and counts it; nothing is ever half written. */
-    if(session->output_message_count >= (int)REMOTE_PROTOCOL_PERIPHERAL_OUTBOUND_QUEUE_DEPTH ||
+    if(session->output_message_count >= (int)REMOTE_SESSION_OUTBOUND_QUEUE_DEPTH ||
        session->output_length + line_length > sizeof(session->output)) {
         if(drop_counter != NULL) (*drop_counter)++;
         return false;
@@ -168,9 +168,6 @@ bool remote_session_report_event(RemoteSession* session, RemoteReportableEvent e
         break;
     case RemoteReportableEventRightShort:
         wire_event = RemoteProtocolEventRightShort;
-        break;
-    case RemoteReportableEventBackShort:
-        wire_event = RemoteProtocolEventBackShort;
         break;
     case RemoteReportableEventCount:
     default:

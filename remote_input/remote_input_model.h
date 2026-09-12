@@ -45,16 +45,16 @@ typedef enum {
 } RemoteInputPressKind;
 
 /*
- * The physical events the remote reports upward, exactly the reported column
- * of the control table in specification 2.3. Their wire spelling belongs to
- * the protocol library (FE3), not here.
+ * The physical events the remote reports upward, the reported column of the
+ * control table in specification 2.3 less BACK_SHORT, which was dropped from
+ * the protocol at promotion (seam Q13, 2026-09-12) and so is reported no
+ * longer. Their wire spelling belongs to the protocol library (FE3), not here.
  */
 typedef enum {
     RemoteReportableEventCenterShort,
     RemoteReportableEventCenterLong,
     RemoteReportableEventLeftShort,
     RemoteReportableEventRightShort,
-    RemoteReportableEventBackShort,
     RemoteReportableEventCount,
 } RemoteReportableEvent;
 

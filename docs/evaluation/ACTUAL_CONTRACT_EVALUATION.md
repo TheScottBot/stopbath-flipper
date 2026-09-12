@@ -36,7 +36,7 @@ uncertainties, and which author decisions are still open.
 | FE3 | Protocol, peer, fuzz | DONE 2026-09-11 on the automated side. Provisional protocol drafted in `PROTOCOL.md` and `protocol.json`; parser and encoder generated from one table; parser fuzzed clean; development peer with misbehaviour modes and a serial shell. Decisions `FD7`, `FD8`, `FD9` and the framing settled by the author for the provisional period; frozen at `FD20`. No hardware gate: FE3 touches no device. |
 | FE4 | Transport, session | DONE 2026-09-11, hardware gate cleared the same day. USB CDC dual mode, channel 1, from `usb_uart_bridge.c` and `furi_hal_usb_cdc.h` at the pinned commit (4.2). The session state machine (handshake, reconnection, the guard, no queueing across a disconnect, sensitive payload cleared on drop) is in `session/remote_session.c`, fully host tested; the integration test runs the connect and disconnect cycle twenty times against the real peer. FAP builds clean. On the device against the Pi: handshake, all four reported buttons, both lock transitions, and reconnection after a cable pull all confirmed. Five bugs surfaced only at the gate and are recorded under "Hardware findings, FE4" below; none was visible to the host tests, because each lived in the SDK glue or the peer's OS I/O, neither of which is host tested. |
 | FE5 | QR rendering | DONE 2026-09-12 on the automated side; the scanning hardware gate is the author's and was brought forward and cleared for the two real payloads at the FD4 experiment (a phone read the Wi-Fi and gallery codes at close range). The published vector criterion is met by `tests/test_remote_qr_vectors.c`: four whole matrices spanning versions 1 to 3 and both alphanumeric and byte modes, emitted by the product path and reproduced module for module by libqrencode, an encoder unrelated to the vendored one (4.4, "Published vector cross check"). An oversized payload is refused by the encoder and now shows a distinct message in the code area rather than the empty frame that read as a broken code (`remote_display_layout.c`, `compose_code_unavailable`), tested in `test_remote_display_layout.c`. A measured finding at this phase: with the appliance's real credential generator a guest SSID prefix longer than about 8 characters pushes the Wi-Fi payload past the version 3 ceiling, so the QR cannot be shown; the Flipper now falls back to NFC (presented independently of QR fit) with a "tap to join" message, and the constraint (keep `prefix + passphrase <= 28`) is recorded for the appliance and seam under 4.4, "Payload budget and the QR to NFC fallback". |
-| FE6 | NFC presentation | DONE 2026-09-12 on the automated side; the iPhone tap gate is the author's (the Android tap-to-join was cleared at the FD15 to FD17 experiment on the Galaxy Z Fold3). The URI record is checked byte for byte against published vectors, and the Wi-Fi credential against an independent reference, both produced by ndeflib (the nfcpy `ndef` package), in `tests/test_remote_ndef_vectors.c` (see the NFC section, "Published reference cross check"). The two structural criteria are proven: the QR and NFC record for one page derive from one value and cannot name different networks, and no payload is retained once a build refuses. FAP builds clean. |
+| FE6 | NFC presentation | DONE 2026-09-12 on the automated side; the iPhone tap gate is the author's (the Android tap-to-join was cleared at the FD15 to FD17 experiment on the Galaxy Z Fold3). The URI record is checked byte for byte against published vectors, and the Wi-Fi credential against an independent reference, both produced by ndeflib (the nfcpy `ndef` package), in `tests/test_remote_ndef_vectors.c` (see the NFC section, "Published reference cross check"). The two structural criteria are proven: the QR and NFC record for one page derive from one value and cannot name different networks, and no payload is retained once a build refuses. FAP builds clean. Honesty note (appliance handoff 2026-09-12): the Android tap was measured *joined*, not *routed*; a network joined this way is application owned and, per the appliance repository's `IMPLEMENTATION_DEVIATIONS.md` reading of AOSP, is never explicitly selected, so it can route nothing while mobile data is on. That is the same defect the appliance's own 4.6 records for the Google camera QR join, and it is not a Flipper NDEF problem. |
 
 ## Host, development machine (observed 2026-09-11)
 
@@ -881,7 +881,7 @@ records why.
 | FE2 application stack | 4096 bytes in `application.fam`, unmeasured; the composed layout is 696 bytes and the display state 308, both held statically, with one further layout on the stack during composition. Measured with the CLI `top` command at the FE2 gate. |
 | Long press duration (Appendix A) | DECIDED by the author 2026-09-11 for FE1: the firmware's own `InputTypeLong` classification, 300 ms at the pinned commit, isolated behind one function in `stopbath_remote.c`. Revisited with the device in hand at FE4, when `CENTER_LONG` first means something. |
 | Back long press exits | CONFIRMED by the author 2026-09-11. Recorded in `IMPLEMENTATION_DEVIATIONS.md`. |
-| `FD15`, `FD16`, `FD17` NFC | ANSWERED on hardware 2026-09-11 by the author, second attempt (see the NFC section): `FD15` yes, an application can present an NDEF target whose payload is chosen at runtime, through the Type 4 Tag listener; `FD16` yes, the code stayed drawn while the listener ran and the phone read it; `FD17` yes, Android accepted the Wi-Fi credential record built as its parser reads it and the join succeeded; the gallery page's URI record was read and the address opened. Handset: Samsung Galaxy Z Fold3 (the StopBath repository's `IMPLEMENTATION_DEVIATIONS.md` records the author's Fold as `SM-F926B` on Android 15, measured 2026-09-04). iPhone not yet tried. The FE6 phase is therefore not dropped. |
+| `FD15`, `FD16`, `FD17` NFC | ANSWERED on hardware 2026-09-11 by the author, second attempt (see the NFC section): `FD15` yes, an application can present an NDEF target whose payload is chosen at runtime, through the Type 4 Tag listener; `FD16` yes, the code stayed drawn while the listener ran and the phone read it; `FD17` yes, Android accepted the Wi-Fi credential record built as its parser reads it and joined (joined, not necessarily routed: a network joined by tap or QR is application owned and never explicitly selected, an AOSP behaviour the appliance repository records, not a Flipper NDEF fault); the gallery page's URI record was read and the address opened. Handset: Samsung Galaxy Z Fold3 (the StopBath repository's `IMPLEMENTATION_DEVIATIONS.md` records the author's Fold as `SM-F926B` on Android 15, measured 2026-09-04). iPhone not yet tried. The FE6 phase is therefore not dropped. |
 | `FD18` Guest gallery address | Blocked on the `D30` reference and the `guest.stopbath.photo` conflict in the main repository, both raised to the author 2026-09-11. |
 | `FD19` Screen lock | ANSWERED from source: application level lock. |
 | `PD11` Protocol definition format | No longer blocks anything here. Under the revised build order (extension 1.4, Flipper 2.9) it is taken at promotion, after `FD20`. The seam document's 4.8 proposal is the input to the FE3 draft. |
@@ -919,57 +919,72 @@ Defects 1 and 2 above are RESOLVED in the main specification as of the author's
 2026-09-11 revision: `D30` now exists and settles the gallery address on the bare
 local address, and `D3` was amended alongside it.
 
-## Appliance conformance findings from hardware (2026-09-12)
+## Reconnect and button findings from hardware (2026-09-12, corrected)
 
-Found by the author running the Flipper application against the real StopBath
-appliance (not the development peer). Each is the appliance's behaviour against
-the protocol the Flipper is conformant to; they are recorded here as input to the
-FD20 promotion review and the PE-phase conformance tests, and none is fixed in
-this repository (the appliance is a separate repository, not modified here). The
-Flipper's own side was checked against its host tests in each case and is
-behaving to contract; the mitigations added on the Flipper are noted.
+First recorded from the Flipper side alone. Corrected 2026-09-12 evening against
+a written handoff from the appliance (`TheScottBot/stopbath`, branch `flipper-api`
+at `1dfb637`), which read the appliance's journal at debug level where every
+outbound record is logged only after the Linux kernel confirms the Flipper took
+the bytes off the wire (`TIOCOUTQ` drained). That evidence overturns the first of
+the original findings; the corrected set follows.
 
-1. **No DISPLAY acceptance on a live-session reconnect.** After an unplug and
-   replug while a session is running, the appliance logs `peripheral connected`
-   (it parsed the HELLO) but does not send the DISPLAY that is the handshake
-   acceptance (PROTOCOL.md handshake; seam 4.2 "resend the full record"). The
-   Flipper, correct to send HELLO and wait for the DISPLAY, hangs in "reconnecting"
-   until a state change (killing the session from the dashboard) forces a DISPLAY,
-   which it then receives and renders. Proof it is the send, not the Flipper's
-   receive: the kill DISPLAY is received fine on the same reconnected link. Fix:
-   send the current DISPLAY after every successful HELLO, reconnect included.
+1. **The reconnect hang is a Flipper defect, not a missing appliance send
+   (original finding 1 WITHDRAWN).** The appliance does send the acceptance:
+   `handshakeLocked` logs `peripheral connected` and then writes the full current
+   record, held by a test that reattaches during a live session and asserts one
+   record written at once. On hardware every reattach logged `record written
+   status=PRESENTING length=127..129` within 1 to 3 ms of `connected`, and the
+   bytes were taken by the Flipper. The original "proof it is the send, not the
+   receive" was wrong: the kill record is 63 bytes (one USB packet) and the
+   acceptance is 127 to 129 bytes (two or three packets), so a later single packet
+   record arriving does not show the earlier multi packet one was sent. The real
+   cause is a Flipper side **stale DTR** across a re-enumeration. On a reinsertion
+   that delivers no suspend before the wakeup (or reorders them), `dtr_present`
+   stayed true, so the port looked open the instant the cable was back and the FAP
+   sent HELLO before the host had opened the port (the appliance saw the HELLO one
+   millisecond after opening the port, impossible after a real DTR). In that state
+   the FAP's USB stack serviced no host OUT transfer until the FAP next
+   transmitted, so the acceptance sat untaken until the retry HELLO went out (or,
+   before the retry existed, forever). Fixed in `remote_transport.c`: a resume now
+   re-reads the real DTR line (`revalidate_dtr`) rather than trusting the cached
+   value, so HELLO is sent only in answer to a real open.
 
-2. **`BAD_VALUE` for a valid `BACK_SHORT` event.** A short back press reports
-   `BACK_SHORT`, which is in the protocol event set (`protocol.json`) and required
-   by Flipper spec 2.3. The appliance answers `BAD_VALUE` ("value outside its type
-   or bound"), which is wrong for a value that is in the enum. Its action is still
-   undecided (seam Q13); a valid-but-unmapped event should be a no-op, never a
-   value rejection. Q13 is now urgent, since leaving it open makes a pocket press
-   an error.
+2. **`BAD_VALUE` for `BACK_SHORT`: the appliance is correct.** `BACK_SHORT` was
+   dropped from the definition at promotion (seam Q13, "drop BACK_SHORT",
+   2026-09-12) and is absent from the appliance's protocol definition, which owns
+   the protocol from promotion on. This repository still listed it because the two
+   promotion removals had not been applied here; they now are (`protocol.json`, and
+   the input model no longer reports a short back press). Q13 is not open.
 
-3. **Freeze on repeated button presses.** Spamming back produces repeated
-   `BAD_VALUE` (finding 2), which the appliance counts toward its consecutive
-   malformed or rate link-drop (`consecutive_malformed_before_link_drop`), drops
-   the link, and then finding 1 keeps it from re-accepting until the session is
-   killed from the web app: the device is locked out. Two errors: a valid event
-   value must not count toward a "peer speaking gibberish" drop, and a reconnect
-   must resend the DISPLAY (finding 1). The Flipper cannot freeze on its own here;
-   while connected it only paints error banners, so a freeze requires the
-   appliance to stop responding.
+3. **The lockout is by design, and its trigger is now gone.** Five refusals in a
+   row drop the link (seam 4.6, accepted at promotion: every refusal counts); the
+   link reopens 250 ms later and the reattach then hit finding 1's stale DTR, which
+   the retry recovers. With `BACK_SHORT` removed from the FAP, a back press puts
+   nothing on the wire and cannot count toward the drop, so the trigger is gone.
+   Whether value refusals should count at all is the appliance owner's call; their
+   recommendation is to leave it.
 
-4. **`ACTIVE` for a redundant `CENTER_SHORT` (minor).** Pressing centre while a
-   session runs reports `CENTER_SHORT` (start), which the appliance correctly
-   rejects with `ACTIVE`. Working as designed; the only wart is a cryptic code on
-   a guest-facing screen for a natural mis-press. The appliance could no-op a
-   redundant start instead.
+4. **`ACTIVE` for a redundant `CENTER_SHORT`: working as designed.** Per the
+   interpretation table the author accepted. A product choice, not a conformance
+   issue.
 
-Flipper mitigations added 2026-09-12, neither a substitute for the appliance
-fixes: a bounded handshake retry re-sends HELLO every
-`REMOTE_SESSION_HANDSHAKE_RETRY_INTERVAL_MILLISECONDS` (2000) while stuck
-handshaking, so a lost acceptance recovers on its own (it recovers finding 1 only
-if the appliance resends the record on a repeated HELLO, which seam 4.2 requires);
-and a firmware-log trace (`docs/DIAGNOSTICS.md`) makes the link state, handshake
-retries, received DISPLAY records with their error codes, and the diagnostic
-counters visible live over the command line on channel 0 while the link runs on
-channel 1, so the next such fault is diagnosed from the trace rather than by
-inference.
+Flipper changes from this, 2026-09-12: the stale DTR fix above (the real cure);
+and the bounded handshake retry, kept because it is correct, cheap, and useful,
+but now described honestly as covering a Flipper side stale port state (a lost or
+withheld acceptance), not a missing appliance send. A firmware-log trace
+(`docs/DIAGNOSTICS.md`) makes the link state, the handshake retries, received
+DISPLAY records with their error codes, and the diagnostic counters visible live
+over the command line on channel 0 while the link runs on channel 1. The author's
+outstanding hardware check (handoff section 3): reproduce the reattach with the
+trace open and the appliance at debug, and confirm `StopBathLink port opened` is
+timestamped after `peripheral attached` and the acceptance is taken in
+milliseconds without the retry firing; and whether `malformed_received` increments
+on a case-A reattach (it should not, if the record was withheld rather than
+mangled).
+
+Also fixed appliance side, so not chased here: a write the Flipper does not take
+within two seconds now drops the link rather than waiting forever; closing the
+port flushes untaken output first (a service restart with the Flipper attached
+completes in under 100 ms, not 39 s); and a close no longer reopens the device in
+a loop. FAP logs before 19:40 on 2026-09-12 showing port open/close storms around
+appliance restarts were that last appliance bug, now fixed.

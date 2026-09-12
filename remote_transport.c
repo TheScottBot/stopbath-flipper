@@ -48,6 +48,13 @@ struct RemoteTransport {
      */
     volatile bool usb_present;
     volatile bool dtr_present;
+    /* Set by the state callback on a resume, cleared by the service loop once
+     * it has re-read the real DTR line from the hardware. A re-enumeration can
+     * deliver a resume with no suspend before it (or reorder the two), leaving
+     * dtr_present stale true so the port looks open when the host has not opened
+     * it yet; re-reading the line on every resume, rather than trusting the
+     * cached value, means HELLO is sent only in answer to a real open. */
+    volatile bool revalidate_dtr;
     /* Released by the tx complete callback when a transmit finishes, so the
      * send buffer is never reused while the USB hardware is still reading it.
      * Starts available. */
@@ -61,13 +68,22 @@ static void transport_state_callback(void* context, CdcState state) {
     RemoteTransport* transport = context;
     bool connected = (state == CdcStateConnected);
     transport->usb_present = connected;
-    if(!connected) {
+    if(connected) {
+        /* A resume, possibly a fresh re-enumeration with no suspend before it.
+         * The cached DTR may be stale true from before the cable moved, so ask
+         * the service loop to re-read the real line before treating the port as
+         * open. Without this the port looked open the instant the cable was
+         * back and HELLO went out before the host had opened it, which the
+         * appliance saw as a HELLO one millisecond after it opened the port. */
+        transport->revalidate_dtr = true;
+    } else {
         /* On a physical cable pull the host cannot send a DTR drop, so DTR
          * would otherwise stay stale true and, on reinsert, be read as a port
          * still open, starting a handshake with nobody there. Clearing it here
          * means a reconnection waits for the host to open the port again, which
          * the ctrl line callback then reports. */
         transport->dtr_present = false;
+        transport->revalidate_dtr = false;
     }
 }
 
@@ -107,6 +123,7 @@ RemoteTransport* remote_transport_alloc(RemoteSession* session) {
     transport->port_open = false;
     transport->usb_present = false;
     transport->dtr_present = false;
+    transport->revalidate_dtr = false;
     transport->tx_complete = furi_semaphore_alloc(1, 1);
     return transport;
 }
@@ -182,6 +199,20 @@ void remote_transport_close(RemoteTransport* transport) {
 void remote_transport_service(RemoteTransport* transport) {
     if(!transport->opened) {
         return;
+    }
+
+    /* After a resume, replace any stale cached DTR with the real line, so a
+     * reinsertion that delivered no suspend cannot leave the port looking open
+     * before the host has opened it. The ctrl line callback still catches a
+     * later open; this only corrects a value that was carried across the
+     * re-enumeration. Thread context, so the hardware read is safe. */
+    if(transport->revalidate_dtr) {
+        transport->revalidate_dtr = false;
+        bool dtr = (furi_hal_cdc_get_ctrl_line_state(LINK_CHANNEL) & CdcCtrlLineDTR) != 0;
+        if(dtr != transport->dtr_present) {
+            FURI_LOG_I(TAG, "resume: DTR re-read %d (was %d)", dtr, transport->dtr_present);
+        }
+        transport->dtr_present = dtr;
     }
 
     /* The port is usable only when the cable is in and the host has opened

@@ -31,7 +31,6 @@ static const ReportableRow reportable_rows[] = {
     {RemoteInputButtonCenter, RemoteInputPressLong, RemoteReportableEventCenterLong, "centre long"},
     {RemoteInputButtonLeft, RemoteInputPressShort, RemoteReportableEventLeftShort, "left short"},
     {RemoteInputButtonRight, RemoteInputPressShort, RemoteReportableEventRightShort, "right short"},
-    {RemoteInputButtonBack, RemoteInputPressShort, RemoteReportableEventBackShort, "back short"},
 };
 
 static void every_reportable_row_reports_its_event_while_unlocked(RemoteTestReport* report) {
@@ -62,6 +61,7 @@ static const IgnoredRow ignored_rows[] = {
     {RemoteInputButtonUp, RemoteInputPressLong, "up long is unused"},
     {RemoteInputButtonLeft, RemoteInputPressLong, "left long is not in the table"},
     {RemoteInputButtonRight, RemoteInputPressLong, "right long is not in the table"},
+    {RemoteInputButtonBack, RemoteInputPressShort, "back short reports nothing, BACK_SHORT dropped at promotion"},
     {RemoteInputButtonCenter, RemoteInputPressOther, "a press phase is not a classified press"},
     {RemoteInputButtonBack, RemoteInputPressOther, "a release phase is not a classified press"},
     {RemoteInputButtonDown, RemoteInputPressOther, "a repeat phase never touches the lock"},

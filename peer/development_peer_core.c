@@ -132,7 +132,6 @@ static void apply_demo_script(DevelopmentPeerCore* peer, const RemoteProtocolMes
         if(!active) return;
         set_current_page(peer, RemoteProtocolPageGuest);
         break;
-    case RemoteProtocolEventBackShort:
     default:
         return;
     }

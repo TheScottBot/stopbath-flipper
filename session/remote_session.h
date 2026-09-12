@@ -36,6 +36,14 @@
 extern "C" {
 #endif
 
+/* How many outbound messages the session holds before dropping the next and
+ * counting it. This is a Flipper implementation constant, not a protocol bound:
+ * it bounds this peripheral's own input path and the appliance never sees or
+ * honours it, so at promotion (FD20) it was removed from the protocol definition
+ * and lives here instead. A press that would exceed it is dropped, never queued
+ * across a disconnection. */
+#define REMOTE_SESSION_OUTBOUND_QUEUE_DEPTH 4
+
 typedef enum {
     /* The host has not opened the port: no cable, or the appliance has not
      * opened it. Nothing is sent; the display shows not connected. */
@@ -62,10 +70,10 @@ typedef struct {
     RemoteProtocolMessage current_display;
     /* Bytes waiting to be sent by the transport. Bounded; a press that would
      * overflow it is dropped and counted, never queued unboundedly. */
-    uint8_t output[REMOTE_PROTOCOL_MAXIMUM_MESSAGE_LENGTH * REMOTE_PROTOCOL_PERIPHERAL_OUTBOUND_QUEUE_DEPTH];
+    uint8_t output[REMOTE_PROTOCOL_MAXIMUM_MESSAGE_LENGTH * REMOTE_SESSION_OUTBOUND_QUEUE_DEPTH];
     size_t output_length;
-    /* How many whole messages are queued: the protocol's outbound queue
-     * depth is a message count, not a byte count, so it is bounded here. */
+    /* How many whole messages are queued: the session's outbound queue depth is
+     * a message count, not a byte count, so it is bounded here. */
     int output_message_count;
     /* Milliseconds spent in the handshake since the last HELLO, so a lost
      * handshake is retried rather than hung on forever. Meaningful only while

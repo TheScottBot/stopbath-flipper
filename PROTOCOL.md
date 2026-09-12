@@ -92,9 +92,11 @@ current page only: the Wi-Fi code payload for `WIFI`, the gallery address for
 
 ### Events
 
-`CENTER_SHORT`, `CENTER_LONG`, `LEFT_SHORT`, `RIGHT_SHORT`, `BACK_SHORT`.
-This set is the fixed shape of the product (specification 2.3) and is not
-provisional; its wire spelling is what is fixed here.
+`CENTER_SHORT`, `CENTER_LONG`, `LEFT_SHORT`, `RIGHT_SHORT`. `BACK_SHORT` was
+dropped at promotion (seam Q13, 2026-09-12): a short back press has no appliance
+meaning, so the peripheral reports nothing for it and a long back press exits
+the application locally. The wire spelling of the remaining events is fixed
+here.
 
 ### Status codes
 
@@ -142,7 +144,11 @@ appliance actually emits, and when, is the appliance's interpretation table
 | maximum delivered count | 9999 | four digits; the display caps at 999 anyway |
 | maximum inbound rate | 10 per second sustained, burst 20 | presses are made by a hand; more is a faulty or hostile peer |
 | consecutive malformed before link drop | 5 | one is a glitch, five in a row is a peer speaking something else |
-| peripheral outbound queue | 4 | bounds the input path; a fifth press while the link is busy is dropped and counted, never queued across a disconnection |
+
+The peripheral bounds its own outbound queue (four messages) so a burst of
+presses cannot pile up, but that is a Flipper implementation constant, not a
+protocol bound: the appliance never sees or honours it. It was removed from the
+definition at promotion and lives in `session/remote_session.h`.
 
 ### Version policy
 
@@ -182,3 +188,4 @@ Required by specification 2.9 for every change made before the freeze.
 | Date | Change | Reason |
 |---|---|---|
 | 2026-09-11 | First draft, after `FE1`, `FE2` and the surface experiments. Shape taken from the seam document's Part 4 (verbs, fields, bounds, version policy, framing with percent encoding); error codes shortened to eleven characters. | The seam's names do not fit the display beside a code; everything else the appliance asked for is honoured so promotion has little to reconcile. |
+| 2026-09-12 | Promotion (`FD20`): `BACK_SHORT` removed from the event set (seam Q13, "drop BACK_SHORT"), and `peripheral_outbound_queue_depth` removed from the bounds and made a Flipper implementation constant. | Applying the two removals the author took at promotion. `BACK_SHORT` had no appliance meaning and the appliance already refuses it; the queue depth is the peripheral's own and the appliance never honours it. The appliance repository owns the definition from promotion on. |

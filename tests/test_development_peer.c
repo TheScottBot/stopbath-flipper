@@ -67,17 +67,17 @@ static void every_event_is_recorded_after_the_handshake(RemoteTestReport* report
     DevelopmentPeerCore peer;
     development_peer_initialise(&peer);
     feed_line(&peer, "HELLO version=1 peripheral=flipper-zero locked=0\n");
-    static const char* const events[] = {"CENTER_SHORT", "CENTER_LONG", "LEFT_SHORT", "RIGHT_SHORT", "BACK_SHORT"};
-    for(int event_index = 0; event_index < 5; event_index++) {
+    static const char* const events[] = {"CENTER_SHORT", "CENTER_LONG", "LEFT_SHORT", "RIGHT_SHORT"};
+    for(int event_index = 0; event_index < 4; event_index++) {
         char line[128];
         snprintf(line, sizeof(line), "BUTTON event=%s foregrounded=1 unlocked=1\n", events[event_index]);
         feed_line(&peer, line);
     }
     feed_line(&peer, "STATE locked=1\n");
-    REMOTE_TEST_ASSERT_EQUAL_INT(report, 5, peer.buttons_received, "five buttons");
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, 4, peer.buttons_received, "four buttons");
     REMOTE_TEST_ASSERT_EQUAL_INT(report, 1, peer.states_received, "one state");
     REMOTE_TEST_ASSERT(report, peer.peer_locked, "lock state tracked for the dashboard");
-    REMOTE_TEST_ASSERT_EQUAL_INT(report, 7, peer.log_count, "hello, five buttons, one state");
+    REMOTE_TEST_ASSERT_EQUAL_INT(report, 6, peer.log_count, "hello, four buttons, one state");
     const DevelopmentPeerLogEntry* second_button = development_peer_log_entry(&peer, 2);
     REMOTE_TEST_ASSERT_EQUAL_INT(report, DevelopmentPeerLogEntryMessage, second_button->kind, "a message entry");
     REMOTE_TEST_ASSERT(report, strcmp(second_button->line, "BUTTON event=CENTER_LONG foregrounded=1 unlocked=1") == 0, "recorded as received");

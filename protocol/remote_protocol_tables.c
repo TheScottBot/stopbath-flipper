@@ -10,7 +10,6 @@ static const char* const event_values[] = {
     "CENTER_LONG",
     "LEFT_SHORT",
     "RIGHT_SHORT",
-    "BACK_SHORT",
 };
 
 static const char* const status_values[] = {
@@ -88,7 +87,7 @@ const RemoteProtocolVerbDescriptor* remote_protocol_verb_descriptor(RemoteProtoc
 const char* const* remote_protocol_enumeration_values(RemoteProtocolEnumeration enumeration, int* value_count) {
     switch(enumeration) {
     case RemoteProtocolEnumerationEvent:
-        *value_count = 5;
+        *value_count = 4;
         return event_values;
     case RemoteProtocolEnumerationStatus:
         *value_count = 5;

@@ -52,7 +52,10 @@ static RemoteInputOutcome classify_unlocked_press(RemoteInputButton pressed_butt
         if(press_kind == RemoteInputPressShort) return outcome_reporting(RemoteReportableEventRightShort);
         break;
     case RemoteInputButtonBack:
-        if(press_kind == RemoteInputPressShort) return outcome_reporting(RemoteReportableEventBackShort);
+        /* A short back press reports nothing: BACK_SHORT was dropped from the
+         * protocol at promotion (seam Q13, 2026-09-12), so there is no event to
+         * send and the appliance would refuse one. A long back press still
+         * exits the application, which is local and never reported. */
         if(press_kind == RemoteInputPressLong) return outcome_of_kind(RemoteInputOutcomeExitRequested);
         break;
     case RemoteInputButtonUp:

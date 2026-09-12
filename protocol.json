@@ -18,11 +18,10 @@
     "maximum_protocol_version": 65535,
     "maximum_inbound_messages_per_second": 10,
     "maximum_inbound_burst": 20,
-    "consecutive_malformed_before_link_drop": 5,
-    "peripheral_outbound_queue_depth": 4
+    "consecutive_malformed_before_link_drop": 5
   },
   "enumerations": {
-    "event": ["CENTER_SHORT", "CENTER_LONG", "LEFT_SHORT", "RIGHT_SHORT", "BACK_SHORT"],
+    "event": ["CENTER_SHORT", "CENTER_LONG", "LEFT_SHORT", "RIGHT_SHORT"],
     "status": ["READY", "PRESENTING", "GUEST_CONNECTED", "TERMINATING", "RECOVERY_REQUIRED"],
     "page": ["NONE", "WIFI", "GUEST"],
     "error": [

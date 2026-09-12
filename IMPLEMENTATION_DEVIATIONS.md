@@ -23,6 +23,11 @@ states the contract, what was done instead, why, and the test that holds it.
   exit is presentation lifecycle, which specification 2.2 gives to the
   Flipper, and no verb will carry it.
 - Author decision: CONFIRMED 2026-09-11. The exit stands.
+- Update 2026-09-12: `BACK_SHORT` was dropped from the protocol at promotion
+  (seam Q13). A short back press now reports nothing, so the exit gesture no
+  longer shares a button with a reported event; the long back press is the only
+  thing the back button does, and the tension this deviation was written around
+  is gone. The deviation stands only as the record of why the exit is local.
 - Covering tests: `a_long_back_press_while_unlocked_requests_exit` and
   `a_long_back_press_while_locked_is_suppressed` in
   `tests/test_remote_input_model.c`.

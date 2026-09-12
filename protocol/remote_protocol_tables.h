@@ -28,7 +28,6 @@ extern "C" {
 #define REMOTE_PROTOCOL_MAXIMUM_INBOUND_MESSAGES_PER_SECOND 10
 #define REMOTE_PROTOCOL_MAXIMUM_INBOUND_BURST 20
 #define REMOTE_PROTOCOL_CONSECUTIVE_MALFORMED_BEFORE_LINK_DROP 5
-#define REMOTE_PROTOCOL_PERIPHERAL_OUTBOUND_QUEUE_DEPTH 4
 
 /* Derived from the table: the widest verb and the longest text value. */
 #define REMOTE_PROTOCOL_MAX_FIELDS_PER_VERB 5
@@ -39,7 +38,6 @@ typedef enum {
     RemoteProtocolEventCenterLong,
     RemoteProtocolEventLeftShort,
     RemoteProtocolEventRightShort,
-    RemoteProtocolEventBackShort,
     RemoteProtocolEventCount,
 } RemoteProtocolEvent;
 

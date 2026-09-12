@@ -69,10 +69,15 @@ quiet when nothing is happening.
 
 - **Stuck on "reconnecting" after a replug while a session is live.** The trace
   shows `port opened -> handshaking` and then repeated `handshake retry #…`
-  lines with no `DISPLAY status=…` in between. That means the app is sending
-  HELLO but the appliance is not sending the DISPLAY that accepts it. The fix is
-  appliance side (send the current DISPLAY after every successful HELLO). The
-  retry lines are the app trying to recover on its own.
+  lines with no `DISPLAY status=…` in between. On this device the cause has been
+  a Flipper side stale DTR across a re-enumeration: the FAP sent HELLO before the
+  host had opened the port, and the appliance's acceptance then sat untaken until
+  the retry HELLO went out. The `resume: DTR re-read …` line shows the fix
+  re-validating the real line on a resume; a healthy reattach reads DTR true only
+  after the host opens the port, and the acceptance arrives at once with no retry.
+  If instead you see `port opened (usb=1 dtr=1)` timestamped *before* the
+  appliance's `peripheral attached`, that is the stale-DTR case; if after, the
+  open was real. The retry is the safety net, not the cure.
 - **A button shows an error code.** Look for `DISPLAY status=… error=CODE`. The
   code is the appliance's rejection of the press; the Flipper only displays it.
   `error=ACTIVE` is a redundant start while a session runs; `error=BAD_VALUE` is
